@@ -22,11 +22,12 @@ jobs:
       url: ${{ steps.deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-      # enablement: true switches Pages on by itself, so the setting does not
-      # have to be found in the repository options first.
+      # Pages has to be switched on once by hand: Settings -> Pages -> Source:
+      # GitHub Actions. Creating a Pages site needs admin rights on the
+      # repository, and a workflow's GITHUB_TOKEN never has those - so
+      # configure-pages with enablement: true cannot do it either. Deploying to
+      # an existing site only needs pages: write, which is granted above.
       - uses: actions/configure-pages@v5
-        with:
-          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .
