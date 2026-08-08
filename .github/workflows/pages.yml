@@ -28,8 +28,10 @@ jobs:
       # configure-pages with enablement: true cannot do it either. Deploying to
       # an existing site only needs pages: write, which is granted above.
       - uses: actions/configure-pages@v5
+      # Only app/ is published: the test harness and setup script live in this
+      # repository too, and there is no reason to serve them.
       - uses: actions/upload-pages-artifact@v3
         with:
-          path: .
+          path: app
       - id: deploy
         uses: actions/deploy-pages@v4

@@ -1,0 +1,2 @@
+# The tests pull in playwright; the app itself has no dependencies.
+node_modules/
