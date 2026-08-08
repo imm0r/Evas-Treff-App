@@ -599,11 +599,17 @@ const LINK = (page, extra = '') =>
   repo.add('people/photo.jpg', group);
   repo.add('people/people.json', Buffer.from(JSON.stringify({
     photo: 'people/photo.jpg',
-    people: [{ name: 'Ines', x: 0.13, y: 0.39 }, { name: 'Eva-Maria', x: 0.46, y: 0.30 }]
+    people: [
+      { name: 'Ines', x: 0.13, y: 0.39 },
+      { name: 'Eva-Maria', x: 0.46, y: 0.30 },
+      { name: 'Stefan', x: 0.80, y: 0.22, also: ['Stephan'] }
+    ]
   }), 'utf8'));
   const jpeg = await makeJpeg(400, 300, 200);
-  for (const [who, id] of [['Ines', 'a1a1a1a1'], ['Eva-Maria', 'b2b2b2b2']]) {
-    const name = `2026-08-07/1200${id === 'a1a1a1a1' ? '01' : '02'}__${who}__${id}.jpg`;
+  // The third one was uploaded under a spelling that has since been corrected.
+  const uploads = [['Ines', 'a1a1a1a1', '01'], ['Eva-Maria', 'b2b2b2b2', '02'], ['Stephan', 'c3c3c3c3', '00']];
+  for (const [who, id, hh] of uploads) {
+    const name = `2026-08-07/1200${hh}__${who}__${id}.jpg`;
     repo.add(`photos/${name}`, jpeg);
     repo.add(`thumbs/${name}`, jpeg);
   }
@@ -611,10 +617,16 @@ const LINK = (page, extra = '') =>
 
   await page.goto(LINK('index.html'));
   await page.waitForSelector('.tile.is-loaded');
-  await page.waitForFunction(() => document.querySelectorAll('.tile__face').length === 2, { timeout: 15000 });
+  await page.waitForFunction(() => document.querySelectorAll('.tile__face').length === 3, { timeout: 15000 });
   check('faces: every tile carries its uploader', true);
   check('faces: the filter chips too',
-    (await page.locator('.chip--face .avatar').count()) === 2);
+    (await page.locator('.chip--face .avatar').count()) === 3);
+
+  // A corrected spelling must reach backwards: photos already in the album
+  // under the old one keep their face and show the name as it is now.
+  const chips = (await page.locator('.chip--face').allTextContents()).map((t) => t.trim());
+  check('faces: an old spelling shows the corrected name',
+    chips.includes('Stefan') && !chips.includes('Stephan'), JSON.stringify(chips));
 
   // Invert the rendering again: which point of the group photo is in the
   // middle of this avatar? It has to be the face the name belongs to.

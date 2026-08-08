@@ -48,12 +48,24 @@
     };
   }
 
+  /*
+   * Match on the name and on any earlier spelling of it.
+   *
+   * A name is baked into every path someone has ever uploaded, so correcting
+   * one would otherwise split a person in two: old photos under the old
+   * spelling with no face, new ones under the new. An "also" list keeps them
+   * one person, retroactively — and the same mechanism covers a nickname or a
+   * changed surname later.
+   */
   function find(name) {
     if (!loaded.map || !name) return null;
     var wanted = PS.album.slug(name);
     var hit = null;
     loaded.map.people.forEach(function (person) {
-      if (PS.album.slug(person.name) === wanted) hit = person;
+      var spellings = [person.name].concat(person.also || []);
+      spellings.forEach(function (spelling) {
+        if (PS.album.slug(spelling) === wanted) hit = person;
+      });
     });
     return hit;
   }
