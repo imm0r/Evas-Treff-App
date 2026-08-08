@@ -19,6 +19,7 @@
     visible: [],
     filter: null,
     pending: null,   // items found by polling but not shown yet
+    people: null,    // the album's face map, or null when it has none
     lightbox: -1
   };
 
@@ -87,6 +88,7 @@
     try {
       var tree = await PS.gh.tree(state.cfg);
       state.items = PS.album.fromTree(tree.entries);
+      if (!state.people) state.people = await PS.people.load(state.cfg, tree.entries);
       state.pending = null;
       nodes.newPill.classList.add('is-hidden');
       render();
@@ -352,6 +354,18 @@
       class: 'field field--slim', type: 'text', maxlength: '24',
       placeholder: 'Dein Name', autocomplete: 'name'
     });
+    nodes.commentWho = el('button', {
+      class: 'btn btn--small is-hidden',
+      onclick: function () {
+        PS.people.ask(state.cfg, state.people, function (name) {
+          PS.name(name);
+          renderComments();
+        }, function () {
+          nodes.commentName.classList.remove('is-hidden');
+          nodes.commentName.focus();
+        });
+      }
+    }, ['Wer bist du? Auf dem Foto antippen']);
     nodes.commentName.addEventListener('input', function () {
       PS.name(nodes.commentName.value.trim());
     });
@@ -361,7 +375,7 @@
     });
     nodes.commentSend = el('button', { class: 'btn btn--primary', onclick: postComment }, ['Senden']);
     nodes.commentForm = el('div', { class: 'comments__form' }, [
-      nodes.commentName, nodes.commentText, nodes.commentSend
+      nodes.commentWho, nodes.commentName, nodes.commentText, nodes.commentSend
     ]);
     nodes.commentNote = el('p', { class: 'comments__note is-hidden' });
 
@@ -434,7 +448,9 @@
     });
 
     nodes.commentName.value = PS.name();
-    nodes.commentName.classList.toggle('is-hidden', !!PS.name());
+    // With a face map, the keyboard is the fallback rather than the default.
+    nodes.commentWho.classList.toggle('is-hidden', !!PS.name() || !state.people);
+    nodes.commentName.classList.toggle('is-hidden', !!PS.name() || !!state.people);
     nodes.commentForm.classList.toggle('is-hidden', !PS.mayWrite());
     nodes.commentNote.classList.toggle('is-hidden', PS.mayWrite());
     nodes.commentNote.textContent = PS.mayWrite() ? ''
@@ -446,6 +462,7 @@
     var text = nodes.commentText.value.trim();
     if (!item || !text) return;
     if (!PS.name()) {
+      if (state.people) { nodes.commentWho.click(); return; }
       nodes.commentName.classList.remove('is-hidden');
       nodes.commentName.focus();
       PS.toast('Bitte trag deinen Namen ein.');

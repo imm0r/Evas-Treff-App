@@ -304,7 +304,7 @@ const LINK = (page, extra = '') =>
   check('upload: refuses to start without a name', (await page.locator('.toast').count()) === 1);
 
   await page.fill('.field', 'Oma Lotte');
-  await page.setInputFiles('input[type=file]', [
+  await page.setInputFiles('input[type=file][multiple]', [
     { name: 'IMG_0001.jpg', mimeType: 'image/jpeg', buffer: big }
   ]);
   await page.waitForSelector('.job--done', { timeout: 30000 });
@@ -338,7 +338,7 @@ const LINK = (page, extra = '') =>
   check('upload: reports what happened', (await page.textContent('.summary')).includes('Album'));
 
   // Same file again: content-addressed, so it must be recognised, not duplicated.
-  await page.setInputFiles('input[type=file]', [
+  await page.setInputFiles('input[type=file][multiple]', [
     { name: 'kopie.jpg', mimeType: 'image/jpeg', buffer: big }
   ]);
   await page.waitForSelector('.job--skip');
@@ -507,6 +507,77 @@ const LINK = (page, extra = '') =>
   await page.context().close();
 }
 
+// --- 3f2. picking yourself off the family photo ---------------------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  const group = await makeJpeg(800, 500, 60);
+  repo.add('people/photo.jpg', group);
+  repo.add('people/people.json', Buffer.from(JSON.stringify({
+    photo: 'people/photo.jpg',
+    people: [
+      { name: 'Ines', x: 0.13, y: 0.39 },
+      { name: 'Basti', x: 0.46, y: 0.30 },
+      { name: 'Jenny', x: 0.90, y: 0.27 }
+    ]
+  }), 'utf8'));
+
+  await page.goto(LINK('upload.html'));
+  // First visit with no name: the picker should come up by itself.
+  await page.waitForSelector('.who', { timeout: 15000 });
+  check('who: the picker opens on the first visit', true);
+  check('who: one target per person', (await page.locator('.who__spot').count()) === 3);
+  check('who: nothing is chosen yet', await page.locator('.who__proof.is-hidden').count() === 1);
+
+  await page.locator('.who__spot').nth(1).click();
+  await page.waitForSelector('.who__proof:not(.is-hidden)');
+  check('who: tapping proposes a name', (await page.textContent('.who__name')) === 'Basti');
+  check('who: and shows a crop to check it against',
+    (await page.getAttribute('.who__crop', 'style')).includes('background-position'),
+    await page.getAttribute('.who__crop', 'style'));
+
+  // Wrong person: tapping another face must simply re-propose, not commit.
+  await page.locator('.who__spot').nth(2).click();
+  check('who: tapping again corrects the choice', (await page.textContent('.who__name')) === 'Jenny');
+  check('who: still nothing saved before confirming',
+    (await page.evaluate(() => localStorage.getItem('ps:name'))) === null);
+
+  await page.click('.who__proof .btn--primary');
+  await page.waitForSelector('.who', { state: 'detached' });
+  check('who: confirming saves the name',
+    (await page.evaluate(() => localStorage.getItem('ps:name'))) === 'Jenny');
+
+  // And the name really is the one used on the upload.
+  await page.setInputFiles('input[type=file][multiple]', [
+    { name: 'a.jpg', mimeType: 'image/jpeg', buffer: await makeJpeg(600, 400, 10) }
+  ]);
+  await page.waitForSelector('.job--done', { timeout: 30000 });
+  check('who: the picked name lands in the photo path',
+    repo.puts[0].path.includes('__Jenny__'), repo.puts[0].path);
+  check('who: no page errors', page._errors.length === 0, page._errors.join('\n'));
+  await page.context().close();
+}
+
+// --- 3f3. an album without a family photo keeps the name field ------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  await page.goto(LINK('upload.html'));
+  await page.waitForSelector('.drop');
+  await page.waitForTimeout(500);
+  check('who: no picker when the album has no photo', (await page.locator('.who').count()) === 0);
+  check('who: the name field is still there', await page.isVisible('.field[type=text]'));
+  await page.fill('.field[type=text]', 'Oma Lotte');
+  await page.setInputFiles('input[type=file][multiple]', [
+    { name: 'b.jpg', mimeType: 'image/jpeg', buffer: await makeJpeg(600, 400, 80) }
+  ]);
+  await page.waitForSelector('.job--done', { timeout: 30000 });
+  check('who: typing still works', repo.puts[0].path.includes('__Oma-Lotte__'), repo.puts[0].path);
+  await page.context().close();
+}
+
 // --- 3g. comments ---------------------------------------------------------
 {
   const page = await newPage();
@@ -599,7 +670,7 @@ const LINK = (page, extra = '') =>
   await page.goto(LINK('upload.html'));
   await page.fill('.field', 'Jonas');
   const jpeg = await makeJpeg(800, 600, 300);
-  await page.setInputFiles('input[type=file]', [{ name: 'a.jpg', mimeType: 'image/jpeg', buffer: jpeg }]);
+  await page.setInputFiles('input[type=file][multiple]', [{ name: 'a.jpg', mimeType: 'image/jpeg', buffer: jpeg }]);
   await page.waitForSelector('.job--error');
   check('upload: read-only code gets a usable explanation',
     (await page.textContent('.job__state')).includes('Upload-Link'),

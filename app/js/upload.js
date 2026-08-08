@@ -17,6 +17,8 @@
 
   var state = {
     cfg: null,
+    people: null,     // the album's face map, or null when it has none
+    typing: false,    // someone chose to type their name instead
     known: new Set(),   // content hashes already in the album
     jobs: [],
     running: 0,
@@ -35,6 +37,7 @@
       await PS.gh.verify(cfg);
       var tree = await PS.gh.tree(cfg);
       state.known = PS.album.hashes(tree.entries);
+      state.people = await PS.people.load(cfg, tree.entries);
       nodes.status.textContent = state.known.size
         ? 'Im Album sind schon ' + PS.plural(state.known.size, 'Foto', 'Fotos') + '.'
         : 'Noch keine Fotos im Album — mach den Anfang.';
@@ -46,6 +49,37 @@
 
     nodes.shoot.disabled = false;
     nodes.pick.disabled = false;
+    applyPeople();
+
+    // First visit, and this album has a group photo: ask by face rather than
+    // making someone type their own name on a phone keyboard.
+    if (!PS.name() && state.people) askWho();
+  }
+
+  function applyPeople() {
+    if (!state.people) return;
+    nodes.whoButton.classList.remove('is-hidden');
+    nodes.name.classList.toggle('is-hidden', !!PS.name() || state.typing);
+  }
+
+  function askWho() {
+    PS.people.ask(state.cfg, state.people, function (name) {
+      PS.name(name);
+      nodes.name.value = name;
+      state.typing = false;
+      showName();
+      updatePickState();
+    }, function () {
+      state.typing = true;
+      nodes.name.classList.remove('is-hidden');
+      nodes.name.focus();
+    });
+  }
+
+  function showName() {
+    nodes.whoLabel.textContent = PS.name() ? PS.name() : 'Wer bist du?';
+    nodes.whoButton.textContent = PS.name() ? 'Nicht ' + PS.name() + '?' : 'Auf dem Foto antippen';
+    nodes.name.classList.toggle('is-hidden', !!PS.name() && !state.typing);
   }
 
   function renderShell() {
@@ -63,7 +97,14 @@
     nodes.name.addEventListener('input', function () {
       PS.name(nodes.name.value.trim());
       updatePickState();
+      nodes.whoLabel.textContent = PS.name() || 'Wer bist du?';
     });
+
+    nodes.whoLabel = el('strong', { class: 'who__current', text: PS.name() || 'Wer bist du?' });
+    nodes.whoButton = el('button', {
+      class: 'btn btn--small is-hidden',
+      onclick: askWho
+    }, ['Auf dem Foto antippen']);
 
     // Two file inputs, because they open different things. Without `capture`
     // the phone shows its picker (gallery, and camera somewhere in there);
@@ -131,6 +172,7 @@
     ]));
     app.appendChild(el('div', { class: 'panel' }, [
       el('label', { class: 'label' }, ['Wer lädt hoch?']),
+      el('div', { class: 'whorow' }, [nodes.whoLabel, nodes.whoButton]),
       nodes.name,
       drop,
       nodes.status,

@@ -352,6 +352,78 @@ img { display: block; max-width: 100%; }
   .lightbox__nav { opacity: 0.25; }
 }
 
+/* --- "who are you" picker ------------------------------------------------- */
+
+.whorow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.who__current { font-size: 17px; font-family: var(--display); }
+
+.who {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--pad);
+  background: rgba(7, 7, 7, 0.9);
+  overflow-y: auto;
+}
+
+.who__box {
+  width: 100%;
+  max-width: 720px;
+  margin: auto;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  text-align: center;
+}
+
+.who__title { margin: 0 0 4px; font-family: var(--display); font-size: 24px; }
+.who__lead { margin: 0 0 16px; font-size: 14px; color: var(--ink-dim); }
+
+.who__photo { position: relative; border-radius: 10px; overflow: hidden; }
+.who__image { width: 100%; height: auto; }
+.who__spots { position: absolute; inset: 0; }
+
+/* Eleven targets on a phone is tight, so a tap only proposes someone - the
+   crop below confirms it. Hence generous, overlapping circles rather than
+   precise ones. */
+.who__spot {
+  position: absolute;
+  width: 13%;
+  min-width: 44px;
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  cursor: pointer;
+}
+.who__spot:hover { background: rgba(224, 163, 85, 0.28); }
+.who__spot.is-chosen {
+  border-color: var(--accent);
+  background: rgba(224, 163, 85, 0.35);
+  box-shadow: 0 0 0 3px rgba(224, 163, 85, 0.35);
+}
+
+.who__proof { margin-top: 16px; }
+
+.who__crop {
+  width: 128px;
+  height: 128px;
+  margin: 0 auto 10px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background-repeat: no-repeat;
+  background-size: 620%;
+}
+
+.who__name { font-family: var(--display); font-size: 26px; margin-bottom: 12px; }
+.who__proof .btn { width: 100%; max-width: 280px; }
+.who__opt-out { margin-top: 16px; }
+
 /* --- comments ------------------------------------------------------------ */
 
 .tile__talk {
