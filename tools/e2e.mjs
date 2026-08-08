@@ -533,9 +533,21 @@ const LINK = (page, extra = '') =>
   await page.locator('.who__spot').nth(1).click();
   await page.waitForSelector('.who__proof:not(.is-hidden)');
   check('who: tapping proposes a name', (await page.textContent('.who__name')) === 'Basti');
-  check('who: and shows a crop to check it against',
-    (await page.getAttribute('.who__crop', 'style')).includes('background-position'),
-    await page.getAttribute('.who__crop', 'style'));
+  // Invert what the browser is actually rendering: from the computed
+  // background size and offset, work out which point of the photo sits in the
+  // middle of the crop. That has to be the face - checking that the style
+  // "contains a background-position" would pass with any wrong number in it.
+  const centred = await page.evaluate(() => {
+    const el = document.querySelector('.who__crop');
+    const cs = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    const [sw, sh] = cs.backgroundSize.split(' ').map(parseFloat);
+    const [px, py] = cs.backgroundPosition.split(' ').map(parseFloat);
+    return { x: (box.width / 2 - px) / sw, y: (box.height / 2 - py) / sh };
+  });
+  check('who: the crop is centred on the face, not near it',
+    Math.abs(centred.x - 0.46) < 0.02 && Math.abs(centred.y - 0.30) < 0.02,
+    `Mitte des Ausschnitts liegt bei (${centred.x.toFixed(3)}, ${centred.y.toFixed(3)}), erwartet (0.460, 0.300)`);
 
   // Wrong person: tapping another face must simply re-propose, not commit.
   await page.locator('.who__spot').nth(2).click();

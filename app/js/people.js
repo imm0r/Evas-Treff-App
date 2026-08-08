@@ -21,6 +21,10 @@
   var PS = global.PS || (global.PS = {});
   var MAP_PATH = 'people/people.json';
 
+  // How much of the photo's width the confirmation circle shows. Small enough
+  // that one face fills it, wide enough to keep a little context.
+  var CROP_FRAME = 0.13;
+
   var people = {};
 
   /**
@@ -109,25 +113,53 @@
       spots.appendChild(spot);
     });
 
+    /**
+     * Put the face in the middle of the circle.
+     *
+     * Percentage background-position cannot do this: it aligns the P point of
+     * the image with the P point of the box, which only coincides at 50% and
+     * drifts further the closer a face sits to an edge. And a percentage
+     * background-size scales the width only, so the vertical zoom silently
+     * becomes a different one. Both in pixels, both computed.
+     */
+    function frame(person) {
+      var box = crop.getBoundingClientRect();
+      if (!box.width || !img.naturalWidth) return;
+
+      var w = box.width / CROP_FRAME;
+      var h = w * (img.naturalHeight / img.naturalWidth);
+      // Someone at the very edge of the photo would otherwise get a circle
+      // half full of page background.
+      var left = Math.min(0, Math.max(box.width - w, box.width / 2 - person.x * w));
+      var top = Math.min(0, Math.max(box.height - h, box.height / 2 - person.y * h));
+
+      crop.style.backgroundImage = 'url(' + img.src + ')';
+      crop.style.backgroundSize = w + 'px ' + h + 'px';
+      crop.style.backgroundPosition = left + 'px ' + top + 'px';
+    }
+
     function pick(person, spot) {
       chosen = person;
       spots.querySelectorAll('.who__spot').forEach(function (other) {
         other.classList.toggle('is-chosen', other === spot);
       });
-      // background-size 500% then shifted so the face lands in the middle.
-      crop.style.backgroundImage = img.style.backgroundImage || ('url(' + img.src + ')');
-      crop.style.backgroundPosition = (person.x * 100) + '% ' + (person.y * 100) + '%';
       chosenName.textContent = person.name;
+      // Reveal before measuring: a hidden element has no size, and frame()
+      // needs the circle's real width to place the face in its middle.
       proof.classList.remove('is-hidden');
+      frame(person);
       proof.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
 
     document.body.appendChild(overlay);
     document.body.classList.add('is-locked');
 
+    // Someone can tap before the photo has finished decoding, and the crop
+    // needs its natural size to do the arithmetic. Redo it once that is known.
+    img.addEventListener('load', function () { if (chosen) frame(chosen); });
+
     try {
       img.src = await PS.gh.blobUrl(cfg, map.photoSha);
-      crop.style.backgroundImage = 'url(' + img.src + ')';
     } catch (error) {
       close();
       onTypeInstead();

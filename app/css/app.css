@@ -417,7 +417,7 @@ img { display: block; max-width: 100%; }
   border: 2px solid var(--accent);
   border-radius: 50%;
   background-repeat: no-repeat;
-  background-size: 620%;
+  /* size and position are computed in people.js - see frame() for why */
 }
 
 .who__name { font-family: var(--display); font-size: 26px; margin-bottom: 12px; }
