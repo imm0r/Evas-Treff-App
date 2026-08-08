@@ -45,7 +45,7 @@
       };
       img.onerror = function () {
         URL.revokeObjectURL(url);
-        reject(new Error('Dieses Bildformat kann der Browser nicht öffnen (bei HEIC-Fotos vom iPhone hilft: Einstellungen → Kamera → Formate → "Maximale Kompatibilität").'));
+        reject(new Error('Dieses Bildformat kann der Browser nicht öffnen.'));
       };
       img.src = url;
     });

@@ -60,6 +60,41 @@
   }
 
   /**
+   * Capture time out of a raw TIFF block — the thing an EXIF payload actually
+   * is, once its container has been peeled away.
+   *
+   * A JPEG wraps it in an APP1 segment; HEIF stores the same bytes as a
+   * metadata item. Same walk either way, so it lives here and both callers
+   * use it. Accepts an optional "Exif\0\0" prefix, which both containers
+   * sometimes carry and sometimes do not.
+   */
+  PS.exifDateFromTiff = function (bytes) {
+    try {
+      var view = new DataView(bytes.buffer || bytes, bytes.byteOffset || 0, bytes.byteLength);
+      var tiff = 0;
+      // Skip a leading "Exif\0\0" if the container kept it.
+      if (view.byteLength > 6 && view.getUint8(0) === 0x45 && view.getUint8(1) === 0x78 &&
+          view.getUint8(2) === 0x69 && view.getUint8(3) === 0x66) tiff = 6;
+      if (tiff + 8 > view.byteLength) return null;
+
+      var order = view.getUint16(tiff, false);
+      if (order !== 0x4949 && order !== 0x4d4d) return null;
+      var little = order === 0x4949;
+      if (view.getUint16(tiff + 2, little) !== 0x002a) return null;
+
+      var found = {};
+      readIfd(view, tiff, view.getUint32(tiff + 4, little), little,
+        [TAG_DATE_TIME, TAG_EXIF_IFD, TAG_DATE_TIME_ORIGINAL, TAG_DATE_TIME_DIGITIZED], found);
+
+      return parseStamp(found[TAG_DATE_TIME_ORIGINAL]) ||
+        parseStamp(found[TAG_DATE_TIME_DIGITIZED]) ||
+        parseStamp(found[TAG_DATE_TIME]);
+    } catch (e) {
+      return null;
+    }
+  };
+
+  /**
    * Capture time from a JPEG's EXIF block, or null when there is none.
    * Never throws — a photo with a mangled header should still upload.
    */
@@ -84,19 +119,8 @@
           var tag = '';
           for (var i = 0; i < 4; i++) tag += String.fromCharCode(view.getUint8(offset + 4 + i));
           if (tag === 'Exif') {
-            var tiff = offset + 10;
-            var order = view.getUint16(tiff, false);
-            if (order !== 0x4949 && order !== 0x4d4d) return null;
-            var little = order === 0x4949;
-            if (view.getUint16(tiff + 2, little) !== 0x002a) return null;
-
-            var found = {};
-            readIfd(view, tiff, view.getUint32(tiff + 4, little), little,
-              [TAG_DATE_TIME, TAG_EXIF_IFD, TAG_DATE_TIME_ORIGINAL, TAG_DATE_TIME_DIGITIZED], found);
-
-            return parseStamp(found[TAG_DATE_TIME_ORIGINAL]) ||
-              parseStamp(found[TAG_DATE_TIME_DIGITIZED]) ||
-              parseStamp(found[TAG_DATE_TIME]);
+            // Hand the TIFF block to the shared walker; HEIF arrives there too.
+            return PS.exifDateFromTiff(new Uint8Array(buffer, offset + 10, length - 8));
           }
         }
         offset += 2 + length;

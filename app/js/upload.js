@@ -270,7 +270,16 @@
         return;
       }
 
-      var taken = PS.exifDate(buffer) || new Date(job.file.lastModified || Date.now());
+      // HEIC needs a decoder the browser does not ship, and keeps its capture
+      // date somewhere else, so both come from the same pass.
+      var converted = null;
+      if (PS.heic.looksLike(buffer)) {
+        converted = await PS.heic.decode(buffer, function (message) { mark(job, message, 'busy'); });
+        mark(job, 'wird verkleinert …', 'busy');
+      }
+
+      var taken = (converted && converted.takenAt) || PS.exifDate(buffer) ||
+        new Date(job.file.lastModified || Date.now());
       var day = [
         taken.getFullYear(),
         String(taken.getMonth() + 1).padStart(2, '0'),
@@ -279,7 +288,8 @@
       var time = [taken.getHours(), taken.getMinutes(), taken.getSeconds()]
         .map(function (n) { return String(n).padStart(2, '0'); }).join('');
 
-      var decoded = await PS.decodeImage(new Blob([buffer], { type: job.file.type || 'image/jpeg' }));
+      var decoded = converted ||
+        await PS.decodeImage(new Blob([buffer], { type: job.file.type || 'image/jpeg' }));
       var photo, thumb;
       try {
         photo = await PS.encodeJpeg(decoded, PHOTO_EDGE, PHOTO_QUALITY);

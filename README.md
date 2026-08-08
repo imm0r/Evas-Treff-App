@@ -36,10 +36,13 @@ page that can only load them with the access code baked into the share link.
 
 ## Why it is built this way
 
-**No backend, and no build step.** Three HTML files, six scripts, one
-stylesheet, zero dependencies. Nothing to deploy, nothing to keep running,
-nothing to pay for after the party is over. Open `app/index.html` straight from
-disk and it still works.
+**No backend, and no build step.** Three HTML files, a handful of scripts, one
+stylesheet. Nothing to deploy, nothing to keep running, nothing to pay for
+after the party is over. Open `app/index.html` straight from disk and it still
+works.
+
+One dependency, and only when it is needed: `vendor/libheif.wasm` converts
+HEIC, which no Chromium browser can open — see below.
 
 **Photos are shrunk on the phone, before upload.** A modern phone photo is
 4-8 MB. Fifty guests would produce a repository nobody can clone over the hotel
@@ -196,9 +199,13 @@ browser.
   need a secure context: uploads fall back to a non-cryptographic content
   fingerprint (fine for naming, still deduplicates) and nothing is cached
   between visits. `npm run serve` gives you a proper `http://localhost`.
-- **HEIC.** iPhones shooting in HEIC upload fine from Safari, which decodes it
-  natively. Other browsers cannot, and the app says which setting to change
-  (Camera → Formats → Most Compatible).
+- **HEIC** is converted on the device. No Chromium browser can decode it —
+  not `<img>`, not `createImageBitmap` — so the app carries libheif compiled to
+  WebAssembly and does it itself. That megabyte is fetched only when someone
+  actually picks a HEIC, and the upload page's Content-Security-Policy allows
+  `wasm-unsafe-eval` for it. The capture date is read out of the HEIF container
+  too, or every iPhone photo would be filed under the day it was copied off the
+  phone.
 
 ## Tests
 

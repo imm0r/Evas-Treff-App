@@ -31,7 +31,9 @@ const TYPES = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
-  '.webmanifest': 'application/manifest+json'
+  '.webmanifest': 'application/manifest+json',
+  '.wasm': 'application/wasm',
+  '.heic': 'image/heic'
 };
 
 const checks = [];
@@ -785,6 +787,40 @@ const LINK = (page, extra = '') =>
     return t && t.textContent !== '…';
   });
   check('comments: and sees the text', (await page.textContent('.comment__text')) === 'Da waren alle da.');
+  await page.context().close();
+}
+
+// --- 3i. a HEIC arrives as a JPEG -----------------------------------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  await page.goto(LINK('upload.html'));
+  await page.waitForSelector('.drop');
+  await page.fill('.field[type=text]', 'Jenny');
+
+  // A real file out of a HEIF encoder, with a capture date in its metadata -
+  // the format no Chromium browser can open on its own.
+  const heic = await readFile(new URL('./fixtures/photo-with-exif.heic', import.meta.url));
+  check('heic: the fixture really is one',
+    heic.subarray(4, 8).toString() === 'ftyp', heic.subarray(4, 12).toString());
+
+  await page.setInputFiles('input[type=file][multiple]', [
+    { name: 'IMG_4711.HEIC', mimeType: 'image/heic', buffer: heic }
+  ]);
+  await page.waitForSelector('.job--done', { timeout: 60000 });
+
+  const photo = repo.puts.find((p) => p.path.startsWith('photos/'));
+  const bytes = repo.tree.get(photo.path).bytes;
+  check('heic: it went up as a JPEG', bytes[0] === 0xff && bytes[1] === 0xd8,
+    Array.from(bytes.subarray(0, 4)).map((b) => b.toString(16)).join(' '));
+  const dim = jpegSize(bytes);
+  check('heic: at the right size', dim.width === 1200 && dim.height === 900, JSON.stringify(dim));
+  // The capture date lives in a HEIF metadata item, not an APP1 segment. Get
+  // that wrong and every iPhone photo is filed under the day it was copied.
+  check('heic: filed under the day it was taken, not today',
+    photo.path.startsWith('photos/2026-08-07/2133'), photo.path);
+  check('heic: no page errors', page._errors.length === 0, page._errors.join('\n'));
   await page.context().close();
 }
 
