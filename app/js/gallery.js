@@ -441,7 +441,7 @@
     item.comments.forEach(function (comment) {
       var body = el('p', { class: 'comment__text', text: '…' });
       var head = el('div', { class: 'comment__head' }, [
-        el('span', { class: 'comment__who', text: comment.author }),
+        el('span', { class: 'comment__who', text: PS.people.display(comment.author) }),
         el('span', { class: 'comment__when', text: PS.formatWhen(comment.at) })
       ]);
       var row = el('div', { class: 'comment' }, [head, body]);

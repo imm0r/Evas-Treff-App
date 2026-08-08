@@ -607,7 +607,7 @@ const LINK = (page, extra = '') =>
     repo.add(`photos/${name}`, jpeg);
     repo.add(`thumbs/${name}`, jpeg);
   }
-  repo.add('comments/b2b2b2b2/20260807T121000__Ines__11aa.txt', Buffer.from('Schön!', 'utf8'));
+  repo.add('comments/b2b2b2b2/20260807T121000__Eva-Maria__11aa.txt', Buffer.from('Schön!', 'utf8'));
 
   await page.goto(LINK('index.html'));
   await page.waitForSelector('.tile.is-loaded');
@@ -640,11 +640,33 @@ const LINK = (page, extra = '') =>
   await page.waitForSelector('.comments:not(.is-hidden)');
   check('faces: and every comment', (await page.locator('.comment .avatar').count()) === 1);
 
+  // The avatar is positioned absolutely, so nothing but a padding keeps it off
+  // the text. Measure it rather than trust the stylesheet's ordering.
+  const overlap = await page.evaluate(() => {
+    const face = document.querySelector('.comment .avatar').getBoundingClientRect();
+    const who = document.querySelector('.comment__who').getBoundingClientRect();
+    const body = document.querySelector('.comment__text').getBoundingClientRect();
+    return { gapToName: who.left - face.right, gapToText: body.left - face.right };
+  });
+  check('faces: the avatar does not sit on the comment',
+    overlap.gapToName >= 0 && overlap.gapToText >= 0,
+    `Abstand zum Namen ${overlap.gapToName.toFixed(1)}px, zum Text ${overlap.gapToText.toFixed(1)}px`);
+
   // "Eva-Maria" becomes "Eva-Maria" in the path and would read back as
   // "Eva Maria"; the map knows the hyphen belongs there.
   const chipNames = await page.locator('.chip--face').allTextContents();
-  check('faces: a hyphenated name keeps its hyphen',
+  check('faces: a hyphenated name keeps its hyphen in the filters',
     chipNames.some((t) => t.trim() === 'Eva-Maria'), JSON.stringify(chipNames));
+  // Same name, three other places it is printed.
+  check('faces: and in the caption',
+    (await page.textContent('.lightbox__caption')).includes('Eva-Maria'),
+    await page.textContent('.lightbox__caption'));
+  check('faces: and above a comment',
+    (await page.textContent('.comment__who')) === 'Eva-Maria',
+    await page.textContent('.comment__who'));
+  check('faces: and on the tile',
+    (await page.locator('.tile__by').allTextContents()).includes('Eva-Maria'),
+    JSON.stringify(await page.locator('.tile__by').allTextContents()));
   check('faces: no page errors', page._errors.length === 0, page._errors.join('\n'));
   await page.context().close();
 }

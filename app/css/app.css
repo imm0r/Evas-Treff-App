@@ -379,7 +379,10 @@ img { display: block; max-width: 100%; }
 .lightbox__caption { display: flex; align-items: center; gap: 9px; }
 .lightbox__face { display: flex; flex: none; }
 
-.comment--face { padding-left: 40px; }
+/* Doubled class on purpose: .comment sets the padding shorthand further down
+   this file, and at equal specificity the later rule wins - which quietly
+   removed this indent and dropped the avatar onto the text. */
+.comment.comment--face { padding-left: 40px; }
 .comment--face .avatar { position: absolute; left: 0; top: 9px; }
 
 .who__face { display: inline-flex; }
