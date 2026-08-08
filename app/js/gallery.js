@@ -88,7 +88,12 @@
     try {
       var tree = await PS.gh.tree(state.cfg);
       state.items = PS.album.fromTree(tree.entries);
-      if (!state.people) state.people = await PS.people.load(state.cfg, tree.entries);
+      if (!state.people) {
+        state.people = await PS.people.load(state.cfg, tree.entries);
+        // The photo lands a moment after the grid. Redraw then, so the faces
+        // appear beside the names without holding up the album.
+        if (state.people) PS.people.whenReady(function () { render(); refreshLightboxFace(); });
+      }
       state.pending = null;
       nodes.newPill.classList.add('is-hidden');
       render();
@@ -177,27 +182,37 @@
     state.items.forEach(function (item) {
       if (uploaders.indexOf(item.uploader) < 0) uploaders.push(item.uploader);
     });
+    // Show the spelling the family photo knows, filter on what the paths hold.
+    var shownAs = {};
+    uploaders.forEach(function (name) { shownAs[name] = PS.people.display(name); });
     uploaders.sort(function (a, b) { return a.localeCompare(b, 'de'); });
 
     nodes.filters.innerHTML = '';
     if (uploaders.length < 2) return;
 
     function chip(label, value) {
-      return el('button', {
+      var node = el('button', {
         class: 'chip' + (state.filter === value ? ' is-active' : ''),
         onclick: function () { state.filter = value; render(); }
-      }, [label]);
+      });
+      var face = value && PS.people.avatar(value, 22);
+      if (face) { node.appendChild(face); node.classList.add('chip--face'); }
+      node.appendChild(document.createTextNode(label));
+      return node;
     }
     nodes.filters.appendChild(chip('Alle', null));
-    uploaders.forEach(function (name) { nodes.filters.appendChild(chip(name, name)); });
+    uploaders.forEach(function (name) { nodes.filters.appendChild(chip(shownAs[name], name)); });
   }
 
   function tileFor(item) {
-    var img = el('img', { alt: 'Foto von ' + item.uploader, loading: 'lazy' });
+    var shown = PS.people.display(item.uploader);
+    var img = el('img', { alt: 'Foto von ' + shown, loading: 'lazy' });
     var tile = el('button', {
       class: 'tile',
       onclick: function () { openLightbox(state.visible.indexOf(item)); }
-    }, [img, el('span', { class: 'tile__by', text: item.uploader })]);
+    }, [img, el('span', { class: 'tile__by', text: shown })]);
+    var tileFace = PS.people.avatar(item.uploader, 24);
+    if (tileFace) { tileFace.classList.add('tile__face'); tile.appendChild(tileFace); }
     if (commentCount(item)) {
       tile.appendChild(el('span', { class: 'tile__talk', text: '💬 ' + commentCount(item) }));
     }
@@ -225,8 +240,15 @@
 
   function buildLightbox(app) {
     nodes.lbImage = el('img', { class: 'lightbox__image', alt: '' });
-    nodes.lbCaption = el('div', { class: 'lightbox__caption' });
-    nodes.lbDownload = el('a', { class: 'btn btn--ghost', download: '' }, ['Speichern']);
+    nodes.lbFace = el('span', { class: 'lightbox__face is-hidden' });
+    nodes.lbCaptionText = el('span');
+    nodes.lbCaption = el('div', { class: 'lightbox__caption' }, [nodes.lbFace, nodes.lbCaptionText]);
+    nodes.lbDownload = el('a', { class: 'btn btn--ghost', download: '', title: 'Speichern' }, [
+      // Same trick as the album's top bar: on a narrow phone the word pushes
+      // the caption into an ellipsis, and the caption says who took the photo.
+      el('span', { class: 'btn__wide', text: 'Speichern' }),
+      el('span', { class: 'btn__narrow', text: '⤓' })
+    ]);
     nodes.lbSpinner = el('div', { class: 'spinner spinner--light' });
     nodes.lbComments = el('button', {
       class: 'btn btn--ghost lightbox__comments-toggle',
@@ -314,8 +336,9 @@
     var token = item.id;
     nodes.lbImage.classList.add('is-loading');
     nodes.lbSpinner.classList.remove('is-hidden');
-    nodes.lbCaption.textContent = item.uploader + ' · ' + PS.formatDayShort(item.day) +
-      ', ' + PS.formatTime(item.time) + ' Uhr';
+    nodes.lbCaptionText.textContent = PS.people.display(item.uploader) + ' · ' + PS.formatDayShort(item.day) +
+      ', ' + PS.formatTime(item.time);
+    refreshLightboxFace();
     nodes.lbDownload.setAttribute('download', item.day + '_' + item.time + '_' + item.uploader + '.jpg');
 
     // Only offer deletion on photos this browser uploaded. Everyone shares one
@@ -417,13 +440,13 @@
     var me = PS.name();
     item.comments.forEach(function (comment) {
       var body = el('p', { class: 'comment__text', text: '…' });
-      var row = el('div', { class: 'comment' }, [
-        el('div', { class: 'comment__head' }, [
-          el('span', { class: 'comment__who', text: comment.author }),
-          el('span', { class: 'comment__when', text: PS.formatWhen(comment.at) })
-        ]),
-        body
+      var head = el('div', { class: 'comment__head' }, [
+        el('span', { class: 'comment__who', text: comment.author }),
+        el('span', { class: 'comment__when', text: PS.formatWhen(comment.at) })
       ]);
+      var row = el('div', { class: 'comment' }, [head, body]);
+      var face = PS.people.avatar(comment.author, 30);
+      if (face) { row.classList.add('comment--face'); row.insertBefore(face, head); }
       if (me && PS.album.slug(me) === PS.album.slug(comment.author) && PS.mayWrite()) {
         row.appendChild(el('button', {
           class: 'comment__remove',
@@ -511,6 +534,16 @@
     renderComments();
     updateCommentButton(item);
     render();
+  }
+
+  /** The caption's face, redrawn whenever the photo or the shown item changes. */
+  function refreshLightboxFace() {
+    var item = state.visible[state.lightbox];
+    if (!nodes.lbFace) return;
+    nodes.lbFace.innerHTML = '';
+    var face = item && PS.people.avatar(item.uploader, 26);
+    nodes.lbFace.classList.toggle('is-hidden', !face);
+    if (face) nodes.lbFace.appendChild(face);
   }
 
   function updateCommentButton(item) {

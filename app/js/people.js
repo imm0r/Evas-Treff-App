@@ -27,6 +27,93 @@
 
   var people = {};
 
+  var loaded = { url: null, width: 0, height: 0, map: null };
+  var waiting = [];
+
+  /**
+   * Where to put the photo so that `person` lands in the middle of a box of
+   * `size` pixels. The same arithmetic the confirmation circle uses, and for
+   * the same reason it cannot be done in percentages: those align a point of
+   * the image with the matching point of the box, which is only the centre at
+   * 50%, and a percentage size scales the width alone.
+   */
+  function framing(person, size) {
+    var w = size / CROP_FRAME;
+    var h = w * (loaded.height / loaded.width);
+    return {
+      image: 'url(' + loaded.url + ')',
+      size: w + 'px ' + h + 'px',
+      position: Math.min(0, Math.max(size - w, size / 2 - person.x * w)) + 'px ' +
+                Math.min(0, Math.max(size - h, size / 2 - person.y * h)) + 'px'
+    };
+  }
+
+  function find(name) {
+    if (!loaded.map || !name) return null;
+    var wanted = PS.album.slug(name);
+    var hit = null;
+    loaded.map.people.forEach(function (person) {
+      if (PS.album.slug(person.name) === wanted) hit = person;
+    });
+    return hit;
+  }
+
+  /**
+   * The spelling from the map, when the name matches someone on the photo.
+   *
+   * A name survives a file path as a slug, so "Eva-Maria" comes back out as
+   * "Eva Maria" — the hyphen is indistinguishable from the space it replaced.
+   * The map knows how it is really written; everything else falls through
+   * unchanged.
+   */
+  people.display = function (name) {
+    var person = find(name);
+    return person ? person.name : name;
+  };
+
+  /**
+   * A round crop of someone's face, or null when this album has no photo, the
+   * name is not on it, or the photo has not arrived yet. Callers treat null as
+   * "just show the name" — the face is decoration, never the only label.
+   */
+  people.avatar = function (name, size) {
+    var person = loaded.url && find(name);
+    if (!person) return null;
+    var node = PS.el('span', { class: 'avatar', title: person.name, 'aria-hidden': 'true' });
+    var f = framing(person, size);
+    node.style.width = size + 'px';
+    node.style.height = size + 'px';
+    node.style.backgroundImage = f.image;
+    node.style.backgroundSize = f.size;
+    node.style.backgroundPosition = f.position;
+    return node;
+  };
+
+  /** Run `fn` once the group photo is decoded, or right away if it already is. */
+  people.whenReady = function (fn) {
+    if (loaded.url) fn();
+    else waiting.push(fn);
+  };
+
+  /**
+   * Pull the photo in the background. Awaiting it would hold up the gallery
+   * for a third of a megabyte, and the grid is perfectly usable without faces
+   * next to the names — they appear when they appear.
+   */
+  function warm(cfg, map) {
+    loaded.map = map;
+    PS.gh.blobUrl(cfg, map.photoSha).then(function (url) {
+      var probe = new Image();
+      probe.onload = function () {
+        loaded.url = url;
+        loaded.width = probe.naturalWidth;
+        loaded.height = probe.naturalHeight;
+        waiting.splice(0).forEach(function (fn) { fn(); });
+      };
+      probe.src = url;
+    }).catch(function () { /* no faces, just names */ });
+  }
+
   /**
    * Read the map out of a tree listing the caller already has.
    * Returns null when this album has no photo picker, which is not an error.
@@ -52,12 +139,14 @@
     });
     if (!photoSha) return null;
 
-    return {
+    var map = {
       photoSha: photoSha,
       people: parsed.people.filter(function (p) {
         return p && p.name && typeof p.x === 'number' && typeof p.y === 'number';
       })
     };
+    warm(cfg, map);
+    return map;
   };
 
   /**
@@ -125,17 +214,15 @@
     function frame(person) {
       var box = crop.getBoundingClientRect();
       if (!box.width || !img.naturalWidth) return;
-
-      var w = box.width / CROP_FRAME;
-      var h = w * (img.naturalHeight / img.naturalWidth);
-      // Someone at the very edge of the photo would otherwise get a circle
-      // half full of page background.
-      var left = Math.min(0, Math.max(box.width - w, box.width / 2 - person.x * w));
-      var top = Math.min(0, Math.max(box.height - h, box.height / 2 - person.y * h));
-
+      // The picker can run before warm() has finished, so measure from the
+      // element on screen rather than the cached copy.
+      loaded.url = loaded.url || img.src;
+      loaded.width = loaded.width || img.naturalWidth;
+      loaded.height = loaded.height || img.naturalHeight;
+      var f = framing(person, box.width);
       crop.style.backgroundImage = 'url(' + img.src + ')';
-      crop.style.backgroundSize = w + 'px ' + h + 'px';
-      crop.style.backgroundPosition = left + 'px ' + top + 'px';
+      crop.style.backgroundSize = f.size;
+      crop.style.backgroundPosition = f.position;
     }
 
     function pick(person, spot) {

@@ -202,13 +202,18 @@
     return WEEKDAYS[date.getDay()] + ', ' + parts[2] + '. ' + MONTHS[parts[1] - 1] + ' ' + parts[0];
   };
 
-  /** "2026-08-07" -> "7. Aug. 2026", for places where the full day does not fit. */
+  /**
+   * "2026-08-07" -> "7. Aug.", for places where the full day does not fit.
+   * The year only appears when it is not the current one: at a party this
+   * year, printing it costs the width the caption needs for the time.
+   */
   PS.formatDayShort = function (iso) {
     var parts = iso.split('-').map(Number);
     if (!MONTHS[parts[1] - 1]) return iso;
     var month = MONTHS[parts[1] - 1];
     var short = month.length > 5 ? month.slice(0, 3) + '.' : month;
-    return parts[2] + '. ' + short + ' ' + parts[0];
+    var year = parts[0] === new Date().getFullYear() ? '' : ' ' + parts[0];
+    return parts[2] + '. ' + short + year;
   };
 
   PS.formatTime = function (hhmmss) {

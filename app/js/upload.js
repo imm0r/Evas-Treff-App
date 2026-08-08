@@ -50,6 +50,8 @@
     nodes.shoot.disabled = false;
     nodes.pick.disabled = false;
     applyPeople();
+    PS.people.whenReady(showName);
+    showName();
 
     // First visit, and this album has a group photo: ask by face rather than
     // making someone type their own name on a phone keyboard.
@@ -77,6 +79,10 @@
   }
 
   function showName() {
+    nodes.whoFace.innerHTML = '';
+    var face = PS.people.avatar(PS.name(), 34);
+    nodes.whoFace.classList.toggle('is-hidden', !face);
+    if (face) nodes.whoFace.appendChild(face);
     nodes.whoLabel.textContent = PS.name() ? PS.name() : 'Wer bist du?';
     nodes.whoButton.textContent = PS.name() ? 'Nicht ' + PS.name() + '?' : 'Auf dem Foto antippen';
     nodes.name.classList.toggle('is-hidden', !!PS.name() && !state.typing);
@@ -100,6 +106,7 @@
       nodes.whoLabel.textContent = PS.name() || 'Wer bist du?';
     });
 
+    nodes.whoFace = el('span', { class: 'who__face is-hidden' });
     nodes.whoLabel = el('strong', { class: 'who__current', text: PS.name() || 'Wer bist du?' });
     nodes.whoButton = el('button', {
       class: 'btn btn--small is-hidden',
@@ -172,7 +179,7 @@
     ]));
     app.appendChild(el('div', { class: 'panel' }, [
       el('label', { class: 'label' }, ['Wer lädt hoch?']),
-      el('div', { class: 'whorow' }, [nodes.whoLabel, nodes.whoButton]),
+      el('div', { class: 'whorow' }, [nodes.whoFace, nodes.whoLabel, nodes.whoButton]),
       nodes.name,
       drop,
       nodes.status,

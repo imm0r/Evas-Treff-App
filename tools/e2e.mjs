@@ -590,6 +590,86 @@ const LINK = (page, extra = '') =>
   await page.context().close();
 }
 
+// --- 3f4. faces beside the names ------------------------------------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  const group = await makeJpeg(800, 500, 60);
+  repo.add('people/photo.jpg', group);
+  repo.add('people/people.json', Buffer.from(JSON.stringify({
+    photo: 'people/photo.jpg',
+    people: [{ name: 'Ines', x: 0.13, y: 0.39 }, { name: 'Eva-Maria', x: 0.46, y: 0.30 }]
+  }), 'utf8'));
+  const jpeg = await makeJpeg(400, 300, 200);
+  for (const [who, id] of [['Ines', 'a1a1a1a1'], ['Eva-Maria', 'b2b2b2b2']]) {
+    const name = `2026-08-07/1200${id === 'a1a1a1a1' ? '01' : '02'}__${who}__${id}.jpg`;
+    repo.add(`photos/${name}`, jpeg);
+    repo.add(`thumbs/${name}`, jpeg);
+  }
+  repo.add('comments/b2b2b2b2/20260807T121000__Ines__11aa.txt', Buffer.from('Schön!', 'utf8'));
+
+  await page.goto(LINK('index.html'));
+  await page.waitForSelector('.tile.is-loaded');
+  await page.waitForFunction(() => document.querySelectorAll('.tile__face').length === 2, { timeout: 15000 });
+  check('faces: every tile carries its uploader', true);
+  check('faces: the filter chips too',
+    (await page.locator('.chip--face .avatar').count()) === 2);
+
+  // Invert the rendering again: which point of the group photo is in the
+  // middle of this avatar? It has to be the face the name belongs to.
+  const centre = await page.evaluate(() => {
+    const el = document.querySelector('.chip--face .avatar');
+    const cs = getComputedStyle(el);
+    const box = el.getBoundingClientRect();
+    const [sw, sh] = cs.backgroundSize.split(' ').map(parseFloat);
+    const [px, py] = cs.backgroundPosition.split(' ').map(parseFloat);
+    return { name: el.title, x: (box.width / 2 - px) / sw, y: (box.height / 2 - py) / sh };
+  });
+  const want = { Ines: [0.13, 0.39], 'Eva-Maria': [0.46, 0.30] }[centre.name];
+  check('faces: an avatar is centred on the person it names',
+    Math.abs(centre.x - want[0]) < 0.02 && Math.abs(centre.y - want[1]) < 0.02,
+    `${centre.name}: (${centre.x.toFixed(3)}, ${centre.y.toFixed(3)}), erwartet (${want[0]}, ${want[1]})`);
+
+  await page.locator('.tile').first().click();
+  await page.waitForSelector('.lightbox:not(.is-hidden)');
+  check('faces: the lightbox caption shows one',
+    await page.isVisible('.lightbox__face .avatar'));
+
+  await page.click('.lightbox__comments-toggle');
+  await page.waitForSelector('.comments:not(.is-hidden)');
+  check('faces: and every comment', (await page.locator('.comment .avatar').count()) === 1);
+
+  // "Eva-Maria" becomes "Eva-Maria" in the path and would read back as
+  // "Eva Maria"; the map knows the hyphen belongs there.
+  const chipNames = await page.locator('.chip--face').allTextContents();
+  check('faces: a hyphenated name keeps its hyphen',
+    chipNames.some((t) => t.trim() === 'Eva-Maria'), JSON.stringify(chipNames));
+  check('faces: no page errors', page._errors.length === 0, page._errors.join('\n'));
+  await page.context().close();
+}
+
+// --- 3f5. an album with no group photo shows plain names ------------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  const jpeg = await makeJpeg(300, 300, 120);
+  for (const who of ['Ines', 'Basti']) {
+    const name = `2026-08-07/1200${who === 'Ines' ? '01' : '02'}__${who}__${who === 'Ines' ? 'c3c3c3c3' : 'd4d4d4d4'}.jpg`;
+    repo.add(`photos/${name}`, jpeg);
+    repo.add(`thumbs/${name}`, jpeg);
+  }
+  await page.goto(LINK('index.html'));
+  await page.waitForSelector('.tile.is-loaded');
+  await page.waitForTimeout(400);
+  check('faces: none invented when the album has no photo',
+    (await page.locator('.avatar').count()) === 0);
+  check('faces: the names are still there',
+    (await page.locator('.chip').count()) === 3, 'Alle + zwei Personen');
+  await page.context().close();
+}
+
 // --- 3g. comments ---------------------------------------------------------
 {
   const page = await newPage();

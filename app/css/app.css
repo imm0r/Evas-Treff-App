@@ -352,6 +352,38 @@ img { display: block; max-width: 100%; }
   .lightbox__nav { opacity: 0.25; }
 }
 
+/* A face next to a name, cropped out of the group photo. Always decoration:
+   the name stays readable on its own, for albums that have no photo. */
+.avatar {
+  display: inline-block;
+  flex: none;
+  border-radius: 50%;
+  background-repeat: no-repeat;
+  background-color: var(--surface-2);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 0 0 2px rgba(255, 255, 255, 0.14);
+  vertical-align: middle;
+}
+
+.chip--face { display: inline-flex; align-items: center; gap: 7px; padding-left: 5px; }
+.chip--face .avatar { margin: -1px 0; }
+
+.tile__face {
+  position: absolute;
+  left: 5px;
+  bottom: 5px;
+  opacity: 0.92;
+  pointer-events: none;
+}
+.tile:not(.is-loaded) .tile__face { display: none; }
+
+.lightbox__caption { display: flex; align-items: center; gap: 9px; }
+.lightbox__face { display: flex; flex: none; }
+
+.comment--face { padding-left: 40px; }
+.comment--face .avatar { position: absolute; left: 0; top: 9px; }
+
+.who__face { display: inline-flex; }
+
 /* --- "who are you" picker ------------------------------------------------- */
 
 .whorow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
