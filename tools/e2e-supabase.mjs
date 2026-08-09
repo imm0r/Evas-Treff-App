@@ -253,6 +253,21 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     JSON.stringify(back.otpRequests[0]));
   check('anmeldung: das Ziel steht in der Query, nicht im Body',
     back.otpRequests[0].options === undefined, JSON.stringify(back.otpRequests[0]));
+  // Der Mailserver lehnt ab: nichts, was die Person vor dem Bildschirm
+  // verursacht hat oder beheben kann. Also darf da kein englischer Serversatz
+  // stehen. Genau so ist es einmal passiert - falsches Gmail-Passwort.
+  await page.click('.gate__hint + .btn, .gate .btn--ghost');
+  await page.route(SB + '/auth/v1/otp**', (route) => route.fulfill({
+    status: 500, headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ code: 500, msg: 'Error sending confirmation email' })
+  }));
+  await page.fill('.gate .field', 'ich@example.de');
+  await page.click('.gate .btn--primary');
+  await page.waitForSelector('.gate__hint.is-error');
+  check('anmeldung: ein kaputter Mailversand wird nicht englisch durchgereicht',
+    (await page.textContent('.gate__hint')).indexOf('nicht an dir') >= 0,
+    await page.textContent('.gate__hint'));
+
   check('anmeldung: keine Fehler', errors.length === 0, errors.join('\n'));
   await shot(page, '1-postfach');
   await context.close();

@@ -135,6 +135,11 @@ not a number anybody will meet.
 Verified the hard way: a link was mailed to the project owner and read back out
 of the inbox. That is also how the `redirect_to` bug below turned up.
 
+If the auth log says `535 5.7.8 Username and Password not accepted`, the
+connection is fine and only the login was refused — almost always the account
+password where an app password belongs, or an app password minted while a
+different Google account was signed in. The username must be the full address.
+
 ### 3. The first admin
 
 One row in `invites` with `is_admin = true`. Everyone after that can be invited

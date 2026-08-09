@@ -157,6 +157,13 @@
     }
     if (status === 429) return 'Zu viele Versuche. Warte ein paar Minuten.';
     if (status === 422) return 'Diese E-Mail-Adresse sieht nicht richtig aus.';
+    // The mail server refused the message — a wrong SMTP password, a provider
+    // outage. Nothing the person in front of the screen did, and nothing they
+    // can fix, so say who can. Seen for real: a Gmail app password that had
+    // been typed as the account password came back exactly like this.
+    if (/sending.*email/i.test(message)) {
+      return 'Die Mail konnte nicht verschickt werden. Das liegt nicht an dir — sag Ben Bescheid.';
+    }
     return message || ('Die Anmeldung antwortet mit ' + status + '.');
   }
 
