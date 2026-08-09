@@ -165,6 +165,66 @@
     await PS.sb.remove('comments', 'id=eq.' + comment.id);
   };
 
+  // --- the pinboard ---------------------------------------------------------
+
+  /**
+   * A name for a file nothing else will ever claim.
+   *
+   * The photos are named by their content, which makes a re-upload a no-op —
+   * exactly what you want there. A pinboard picture is the opposite: two posts
+   * may legitimately share a picture, and deleting one must not blank the
+   * other, so each gets its own object.
+   */
+  function objectId() {
+    if (global.crypto && global.crypto.randomUUID) return global.crypto.randomUUID();
+    return Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e9).toString(36);
+  }
+
+  data.posts = async function () {
+    var rows = await PS.sb.select('board_posts',
+      'select=id,body,image_path,author_id,author_name,created_at&order=created_at.desc');
+
+    var paths = [];
+    rows.forEach(function (row) { if (row.image_path) paths.push(row.image_path); });
+    var signed = await PS.sb.signPaths('photos', paths, SIGN_SECONDS);
+
+    return rows.map(function (row) {
+      return {
+        id: row.id,
+        body: row.body || '',
+        author: row.author_name,
+        authorId: row.author_id,
+        at: new Date(row.created_at),
+        imagePath: row.image_path || null,
+        imageUrl: row.image_path ? (signed[row.image_path] || null) : null
+      };
+    });
+  };
+
+  data.addPost = async function (body, image, author) {
+    var path = null;
+    // Picture first, same order and same reason as a photo: a post that says
+    // "look at this" with no picture yet reads as finished and is not.
+    if (image) {
+      path = 'board/' + objectId() + '.jpg';
+      await PS.sb.upload('photos', path, image);
+    }
+    var rows = await PS.sb.insert('board_posts', {
+      body: body || '', image_path: path,
+      author_id: PS.sb.user() && PS.sb.user().id, author_name: author
+    });
+    var row = rows[0];
+    return {
+      id: row.id, body: row.body || '', author: row.author_name, authorId: row.author_id,
+      at: new Date(row.created_at), imagePath: path, imageUrl: null
+    };
+  };
+
+  data.removePost = async function (post) {
+    await PS.sb.remove('board_posts', 'id=eq.' + post.id);
+    if (post.imagePath) await PS.sb.removeFiles('photos', [post.imagePath]);
+  };
+
   // --- people ---------------------------------------------------------------
 
   data.people = async function () {

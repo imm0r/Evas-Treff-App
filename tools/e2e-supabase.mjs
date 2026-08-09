@@ -77,7 +77,7 @@ async function makeJpeg(page, w, h, hue, label) {
 function makeBackend() {
   return {
     otpRequests: [], inserts: [], deletes: [], uploads: [], signCalls: 0,
-    albums: [], photos: [], comments: [], people: [],
+    albums: [], photos: [], comments: [], people: [], board: [],
     profile: { id: 'user-1', email: 'ich@example.de', is_admin: true, person_id: 'p1', people: { name: 'Maria' } }
   };
 }
@@ -141,6 +141,14 @@ async function stub(page, back) {
       back.uploads.push(key);
       images.set(key, request.postDataBuffer() || Buffer.alloc(0));
       return json(200, { Key: 'photos/' + key });
+    }
+    if (p === '/rest/v1/board_posts' && request.method() === 'GET') return json(200, back.board);
+    if (p === '/rest/v1/board_posts' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'board_posts', row });
+      const saved = Object.assign({ id: 'bp-' + (back.board.length + 1), created_at: new Date().toISOString() }, row);
+      back.board.unshift(saved);
+      return json(201, [saved]);
     }
     if (p === '/rest/v1/people') return json(200, back.people);
     if (p === '/rest/v1/profiles') return json(200, [back.profile]);
@@ -361,7 +369,71 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await context.close();
 }
 
-// --- 4. nothing is reachable without a session -----------------------------
+// --- 4. die Pinnwand -------------------------------------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  const pinned = await makeJpeg(scratch, 900, 600, 300, 'Zettel');
+  const group = await makeJpeg(scratch, 800, 500, 40, 'Familie');
+  await scratch.close();
+  images.set('board/alt.jpg', pinned);
+  images.set('photo.jpg', group);
+
+  back.people = [
+    { name: 'Maria', face_x: 0.78, face_y: 0.39, aliases: [] },
+    { name: 'Ines', face_x: 0.13, face_y: 0.39, aliases: [] }
+  ];
+  back.board = [
+    { id: 'bp-0', body: 'Sonntag Kaffee bei uns!', image_path: 'board/alt.jpg',
+      author_id: 'user-9', author_name: 'Ines', created_at: '2026-08-08T09:00:00Z' }
+  ];
+
+  await page.goto(origin + '/board.html' + SESSION);
+  await page.waitForSelector('.post');
+  check('pinnwand: zeigt die Beiträge',
+    (await page.textContent('.post__text')) === 'Sonntag Kaffee bei uns!');
+  check('pinnwand: das Bild kommt über eine signierte URL',
+    await page.locator('.post__image').evaluate((i) => i.complete && i.naturalWidth > 0));
+  check('pinnwand: Gesicht neben dem Namen', (await page.locator('.post .avatar').count()) === 1);
+  check('pinnwand: fremde Beiträge lassen sich nicht löschen',
+    (await page.locator('.comment__remove').count()) === 0);
+
+  const signsBefore = back.signCalls;
+  await page.fill('.compose textarea', 'Bin dabei');
+  await page.click('.compose__actions .btn--primary');
+  await page.waitForFunction(() => document.querySelectorAll('.post').length === 2);
+
+  const written = back.inserts.find((i) => i.table === 'board_posts').row;
+  check('pinnwand: schreibt mit dem eigenen Konto',
+    written.author_id === 'user-1' && written.author_name === 'Maria' && written.body === 'Bin dabei',
+    JSON.stringify(written));
+  check('pinnwand: ein Beitrag ohne Bild lädt nichts hoch', back.uploads.length === 0);
+  // Zwei Beiträge, davon einer mit Bild: das ist genau ein Signieraufruf pro
+  // Neuladen, nicht einer pro Bild.
+  check('pinnwand: signiert die Bilder in einem Aufruf',
+    back.signCalls - signsBefore <= 2, `${back.signCalls - signsBefore}`);
+
+  check('pinnwand: der eigene Beitrag lässt sich löschen',
+    (await page.locator('.comment__remove').count()) === 1);
+  page.on('dialog', (d) => d.accept());
+  await page.click('.comment__remove');
+  await page.waitForFunction(() => document.querySelectorAll('.post').length === 1);
+  check('pinnwand: löschen entfernt die Zeile',
+    back.deletes.some((d) => d.startsWith('/rest/v1/board_posts')), JSON.stringify(back.deletes));
+
+  check('pinnwand: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 5. nothing is reachable without a session -----------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
   const page = await context.newPage();
@@ -372,7 +444,7 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     if (!auth.includes('Bearer ')) reached.push(new URL(route.request().url()).pathname);
     return route.fulfill({ status: 401, headers: { 'Content-Type': 'application/json' }, body: '{}' });
   });
-  for (const where of ['/index.html', '/upload.html']) {
+  for (const where of ['/index.html', '/upload.html', '/board.html']) {
     await page.goto(origin + where);
     await page.waitForSelector('.gate');
     await page.waitForTimeout(300);

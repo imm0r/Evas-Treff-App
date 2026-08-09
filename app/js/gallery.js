@@ -658,9 +658,9 @@
   function askToDelete() {
     var item = state.visible[state.lightbox];
     if (!item) return;
-    nodes.confirmText.textContent = 'Es verschwindet sofort aus dem Album. ' +
-      'In der Versionsgeschichte des Repositories bleibt es erhalten — von dort ' +
-      'kann man es zurückholen, aber nicht aus dieser App heraus.';
+    nodes.confirmText.textContent = 'Es verschwindet sofort aus dem Album, ' +
+      'zusammen mit allem, was darunter geschrieben wurde. Zurückholen kann man ' +
+      'es nicht.';
     nodes.confirm.classList.remove('is-hidden');
   }
 
