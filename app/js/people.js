@@ -6,20 +6,17 @@
  * different ways by the third relative. A group photo everybody already
  * recognises turns it into one tap.
  *
- * The map lives in the album repository, not in this code:
- *
- *   people/people.json   { "photo": "people/photo.jpg", "people": [...] }
- *   people/photo.jpg     the group photo
- *
- * So it is per-album, editable without touching the app, and — importantly —
- * the photo stays in the PRIVATE repository like every other picture. An album
- * without that file simply keeps the name field, so nothing breaks.
+ * The map lives in the database, not in this code: a `people` row per face,
+ * with its position on a group photo in a private storage bucket. Editable
+ * without touching the app, shared by every album, and readable only by
+ * someone signed in. A hub with no group photo simply keeps the name field,
+ * so nothing breaks.
  */
 (function (global) {
   'use strict';
 
   var PS = global.PS || (global.PS = {});
-  var MAP_PATH = 'people/people.json';
+
 
   // How much of the photo's width the confirmation circle shows. Small enough
   // that one face fills it, wide enough to keep a little context.
@@ -112,52 +109,31 @@
    * for a third of a megabyte, and the grid is perfectly usable without faces
    * next to the names — they appear when they appear.
    */
-  function warm(cfg, map) {
+  function warm(map) {
     loaded.map = map;
-    PS.gh.blobUrl(cfg, map.photoSha).then(function (url) {
-      var probe = new Image();
-      probe.onload = function () {
-        loaded.url = url;
-        loaded.width = probe.naturalWidth;
-        loaded.height = probe.naturalHeight;
-        waiting.splice(0).forEach(function (fn) { fn(); });
-      };
-      probe.src = url;
-    }).catch(function () { /* no faces, just names */ });
+    var probe = new Image();
+    probe.onload = function () {
+      loaded.url = map.photoUrl;
+      loaded.width = probe.naturalWidth;
+      loaded.height = probe.naturalHeight;
+      waiting.splice(0).forEach(function (fn) { fn(); });
+    };
+    probe.src = map.photoUrl;
   }
 
   /**
    * Read the map out of a tree listing the caller already has.
    * Returns null when this album has no photo picker, which is not an error.
    */
-  people.load = async function (cfg, entries) {
-    var mapEntry = null;
-    entries.forEach(function (entry) {
-      if (entry.path === MAP_PATH) mapEntry = entry;
-    });
-    if (!mapEntry) return null;
-
-    var parsed;
+  people.load = async function () {
+    var map;
     try {
-      parsed = JSON.parse(await PS.gh.blobText(cfg, mapEntry.sha));
+      map = await PS.data.people();
     } catch (error) {
-      return null; // a broken map must not cost anyone the ability to sign in
+      return null; // faces are decoration; never let them block signing in
     }
-    if (!parsed || !Array.isArray(parsed.people) || !parsed.people.length) return null;
-
-    var photoSha = null;
-    entries.forEach(function (entry) {
-      if (entry.path === parsed.photo) photoSha = entry.sha;
-    });
-    if (!photoSha) return null;
-
-    var map = {
-      photoSha: photoSha,
-      people: parsed.people.filter(function (p) {
-        return p && p.name && typeof p.x === 'number' && typeof p.y === 'number';
-      })
-    };
-    warm(cfg, map);
+    if (!map || !map.people.length) return null;
+    warm(map);
     return map;
   };
 
@@ -165,7 +141,7 @@
    * Show the picker. Calls `onPicked(name)` once someone confirms, or
    * `onTypeInstead()` if they are not in the photo.
    */
-  people.ask = async function (cfg, map, onPicked, onTypeInstead) {
+  people.ask = async function (map, onPicked, onTypeInstead) {
     var el = PS.el;
     var chosen = null;
 
@@ -257,12 +233,8 @@
     // needs its natural size to do the arithmetic. Redo it once that is known.
     img.addEventListener('load', function () { if (chosen) frame(chosen); });
 
-    try {
-      img.src = await PS.gh.blobUrl(cfg, map.photoSha);
-    } catch (error) {
-      close();
-      onTypeInstead();
-    }
+    img.onerror = function () { close(); onTypeInstead(); };
+    img.src = map.photoUrl;
   };
 
   PS.people = people;

@@ -13,8 +13,10 @@
   var PS = global.PS;
   var el = PS.el;
 
+  var TITLE = 'Familie';
+
   var state = {
-    cfg: null,
+    me: null,
     items: [],
     visible: [],
     filter: null,
@@ -28,9 +30,18 @@
   var nodes = {};
   var observer = null;
 
-  function boot(cfg) {
-    state.cfg = cfg;
-    document.title = cfg.title;
+  async function boot() {
+    try {
+      state.me = await PS.data.me();
+    } catch (error) {
+      PS.sb.signOut();
+      location.reload();
+      return;
+    }
+    // The account's own name wins over anything typed on this device: it comes
+    // from the invitation, and the server records it on everything you write.
+    if (state.me && state.me.name) PS.name(state.me.name);
+    document.title = TITLE;
     renderShell();
     load(true);
 
@@ -54,7 +65,7 @@
       onclick: function () { adopt(); }
     });
 
-    nodes.topTitle = el('h1', { class: 'topbar__title', text: state.cfg.title });
+    nodes.topTitle = el('h1', { class: 'topbar__title', text: TITLE });
     nodes.back = el('a', { class: 'btn btn--ghost topbar__back is-hidden', href: 'index.html', title: 'Alle Alben' }, ['‹']);
     nodes.addPhotos = el('a', { class: 'btn btn--primary act-add-photos is-hidden', href: 'upload.html' }, [
       // Two labels: on a narrow phone the full wording pushes the album
@@ -115,18 +126,15 @@
       ]));
     }
     try {
-      var tree = await PS.gh.tree(state.cfg);
-
-      state.shelf = await PS.albums.load(state.cfg, tree.entries);
+      state.shelf = await PS.data.albums();
       state.album = chooseAlbum(state.shelf);
-      PS.album.setRoot(PS.albums.prefix(state.album));
+      state.items = state.album ? await PS.data.photos(state.album.id) : [];
 
-      state.items = state.album ? PS.album.fromTree(tree.entries) : [];
       if (!state.people) {
-        state.people = await PS.people.load(state.cfg, tree.entries);
-        // The photo lands a moment after the grid. Redraw then, so the faces
-        // appear beside the names without holding up the album — but only if
-        // an album is open, or this would paint one over the shelf.
+        state.people = await PS.people.load();
+        // The family photo lands a moment after the grid. Redraw then, so the
+        // faces appear beside the names without holding up the album — but
+        // only if an album is open, or this would paint one over the shelf.
         if (state.people) PS.people.whenReady(function () {
           if (!state.album) return;
           render();
@@ -136,17 +144,14 @@
       state.pending = null;
       nodes.newPill.classList.add('is-hidden');
       if (state.album) render(); else renderShelf();
-      if (tree.truncated) {
-        PS.toast('Das Album ist so groß, dass GitHub die Liste gekürzt hat — es fehlen Fotos.', 'error');
-      }
     } catch (error) {
       setStatus(el('div', { class: 'status status--error' }, [
         el('p', { text: PS.escapeError(error) }),
         el('button', { class: 'btn', onclick: function () { load(true); } }, ['Nochmal versuchen']),
         el('button', {
           class: 'btn btn--ghost',
-          onclick: function () { PS.forget(); location.reload(); }
-        }, ['Anderen Code eingeben'])
+          onclick: function () { PS.sb.signOut(); location.reload(); }
+        }, ['Abmelden'])
       ]));
     }
   }
@@ -155,8 +160,7 @@
   async function poll() {
     if (!state.album) return; // nothing ticking on the shelf
     try {
-      var tree = await PS.gh.tree(state.cfg);
-      var next = PS.album.fromTree(tree.entries);
+      var next = await PS.data.photos(state.album.id);
       if (next.length === state.items.length) return;
       var known = new Set(state.items.map(function (i) { return i.id; }));
       var fresh = next.filter(function (i) { return !known.has(i.id); }).length;
@@ -185,7 +189,7 @@
   }
 
   function render() {
-    nodes.topTitle.textContent = state.album ? state.album.title : state.cfg.title;
+    nodes.topTitle.textContent = state.album ? state.album.title : TITLE;
     nodes.addPhotos.href = albumHref(state.album, 'upload.html');
     nodes.addPhotos.classList.remove('is-hidden');
     nodes.newAlbum.classList.add('is-hidden');
@@ -229,7 +233,7 @@
     nodes.filters.innerHTML = '';
     nodes.count.textContent = state.shelf.length
       ? PS.plural(state.shelf.length, 'Album', 'Alben') : '';
-    nodes.topTitle.textContent = state.cfg.title;
+    nodes.topTitle.textContent = TITLE;
     nodes.addPhotos.classList.add('is-hidden');
     nodes.newAlbum.classList.remove('is-hidden');
 
@@ -258,11 +262,9 @@
         ])
       ]);
       shelf.appendChild(card);
-      if (album.cover) {
-        PS.gh.blobUrl(state.cfg, album.cover).then(function (url) {
-          cover.style.backgroundImage = 'url(' + url + ')';
-          cover.classList.add('is-loaded');
-        }).catch(function () { /* a coverless card is still a card */ });
+      if (album.coverUrl) {
+        cover.style.backgroundImage = 'url(' + album.coverUrl + ')';
+        cover.classList.add('is-loaded');
       }
     });
     nodes.feed.appendChild(shelf);
@@ -275,7 +277,7 @@
     var date = [today.getFullYear(),
       String(today.getMonth() + 1).padStart(2, '0'),
       String(today.getDate()).padStart(2, '0')].join('-');
-    PS.albums.create(state.cfg, title.trim(), date).then(function (album) {
+    PS.data.createAlbum(title.trim(), date, PS.albums.slugify(title.trim())).then(function (album) {
       location.href = albumHref(album, 'upload.html');
     }).catch(function (error) {
       PS.toast(PS.escapeError(error), 'error');
@@ -332,12 +334,12 @@
       if (!entry.isIntersecting) return;
       var tile = entry.target;
       observer.unobserve(tile);
-      PS.gh.blobUrl(state.cfg, tile._item.thumbSha).then(function (url) {
-        tile._img.src = url;
-        tile.classList.add('is-loaded');
-      }).catch(function () {
-        tile.classList.add('is-broken');
-      });
+      if (!tile._item.thumbUrl) { tile.classList.add('is-broken'); return; }
+      // Signed once for the whole album; the browser fetches and caches it
+      // like any other image.
+      tile._img.onload = function () { tile.classList.add('is-loaded'); };
+      tile._img.onerror = function () { tile.classList.add('is-broken'); };
+      tile._img.src = tile._item.thumbUrl;
     });
   }
 
@@ -416,24 +418,18 @@
   }
 
   function closeLightbox() {
-    var item = state.visible[state.lightbox];
     state.lightbox = -1;
     nodes.lightbox.classList.add('is-hidden');
     nodes.comments.classList.add('is-hidden');
     document.body.classList.remove('is-locked');
     nodes.lbImage.removeAttribute('src');
-    // Full-size photos are megabytes each; hand them back rather than letting a
-    // long browsing session pile them up in memory. The disk cache keeps them.
-    if (item) PS.gh.forgetBlob(item.photoSha);
   }
 
   function step(delta) {
     var next = state.lightbox + delta;
     if (next < 0 || next >= state.visible.length) return;
-    var previous = state.visible[state.lightbox];
     state.lightbox = next;
     showCurrent();
-    if (previous) PS.gh.forgetBlob(previous.photoSha);
   }
 
   async function showCurrent() {
@@ -449,31 +445,34 @@
     // Only offer deletion on photos this browser uploaded. Everyone shares one
     // token, so this is a courtesy, not a permission: it stops someone tidying
     // up other people's photos by accident, and nothing more.
-    var me = PS.name();
-    var mine = me && PS.album.slug(me) === PS.album.slug(item.uploader);
-    // ...and only while the code in this browser might actually be allowed to.
-    // A button that answers "you may not" is worse than no button.
-    nodes.lbDelete.classList.toggle('is-hidden', !mine || !PS.mayWrite());
+    // Yours means yours: the account that uploaded it, checked server-side
+    // too, rather than a name someone typed.
+    nodes.lbDelete.classList.toggle('is-hidden', !mine(item.uploaderId));
     hideConfirm();
     updateCommentButton(item);
     if (!nodes.comments.classList.contains('is-hidden')) renderComments();
 
-    // Show the thumbnail immediately so there is never a blank stage.
-    try {
-      nodes.lbImage.src = await PS.gh.blobUrl(state.cfg, item.thumbSha);
-    } catch (e) { /* the full size below is the one that matters */ }
-
-    try {
-      var url = await PS.gh.blobUrl(state.cfg, item.photoSha);
-      if (state.visible[state.lightbox] && state.visible[state.lightbox].id !== token) return; // moved on
-      nodes.lbImage.src = url;
-      nodes.lbDownload.href = url;
-    } catch (error) {
-      PS.toast(PS.escapeError(error), 'error');
-    } finally {
+    // Show the thumbnail immediately so there is never a blank stage, then
+    // let the full size replace it once the browser has it.
+    if (item.thumbUrl) nodes.lbImage.src = item.thumbUrl;
+    if (!item.photoUrl) {
       nodes.lbImage.classList.remove('is-loading');
       nodes.lbSpinner.classList.add('is-hidden');
+      return;
     }
+    var full = new Image();
+    full.onload = function () {
+      if (!state.visible[state.lightbox] || state.visible[state.lightbox].id !== token) return; // moved on
+      nodes.lbImage.src = item.photoUrl;
+      nodes.lbDownload.href = item.photoUrl;
+      nodes.lbImage.classList.remove('is-loading');
+      nodes.lbSpinner.classList.add('is-hidden');
+    };
+    full.onerror = function () {
+      nodes.lbImage.classList.remove('is-loading');
+      nodes.lbSpinner.classList.add('is-hidden');
+    };
+    full.src = item.photoUrl;
   }
 
   function buildComments() {
@@ -485,7 +484,7 @@
     nodes.commentWho = el('button', {
       class: 'btn btn--small is-hidden',
       onclick: function () {
-        PS.people.ask(state.cfg, state.people, function (name) {
+        PS.people.ask(state.people, function (name) {
           PS.name(name);
           renderComments();
         }, function () {
@@ -544,7 +543,7 @@
 
     var me = PS.name();
     item.comments.forEach(function (comment) {
-      var body = el('p', { class: 'comment__text', text: '…' });
+      var body = el('p', { class: 'comment__text' });
       var head = el('div', { class: 'comment__head' }, [
         el('span', { class: 'comment__who', text: PS.people.display(comment.author) }),
         el('span', { class: 'comment__when', text: PS.formatWhen(comment.at) })
@@ -552,7 +551,7 @@
       var row = el('div', { class: 'comment' }, [head, body]);
       var face = PS.people.avatar(comment.author, 30);
       if (face) { row.classList.add('comment--face'); row.insertBefore(face, head); }
-      if (me && PS.album.slug(me) === PS.album.slug(comment.author) && PS.mayWrite()) {
+      if (mine(comment.authorId)) {
         row.appendChild(el('button', {
           class: 'comment__remove',
           title: 'Kommentar löschen',
@@ -561,28 +560,16 @@
       }
       nodes.commentList.appendChild(row);
 
-      // A comment posted a moment ago has its text in hand and no sha yet;
-      // asking GitHub for blob "null" is both pointless and a 404.
-      if (comment.text !== undefined) {
-        body.textContent = comment.text;
-      } else {
-        PS.gh.blobText(state.cfg, comment.sha).then(function (text) {
-          body.textContent = text;
-        }).catch(function () {
-          body.textContent = '(Text konnte nicht geladen werden)';
-          body.classList.add('is-error');
-        });
-      }
+      body.textContent = comment.body;
     });
 
     nodes.commentName.value = PS.name();
     // With a face map, the keyboard is the fallback rather than the default.
     nodes.commentWho.classList.toggle('is-hidden', !!PS.name() || !state.people);
     nodes.commentName.classList.toggle('is-hidden', !!PS.name() || !!state.people);
-    nodes.commentForm.classList.toggle('is-hidden', !PS.mayWrite());
-    nodes.commentNote.classList.toggle('is-hidden', PS.mayWrite());
-    nodes.commentNote.textContent = PS.mayWrite() ? ''
-      : 'Zum Mitschreiben brauchst du den Upload-Link.';
+    // Everyone signed in may write; there is no read-only kind of member.
+    nodes.commentForm.classList.remove('is-hidden');
+    nodes.commentNote.classList.add('is-hidden');
   }
 
   async function postComment() {
@@ -599,13 +586,10 @@
 
     nodes.commentSend.disabled = true;
     nodes.commentSend.textContent = 'Sendet …';
-    var when = new Date();
-    var nonce = Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0');
-    var path = PS.album.commentPath(item.id, when, PS.name(), nonce);
 
+    var saved;
     try {
-      var encoded = await PS.toBase64(new Blob([text], { type: 'text/plain' }));
-      await PS.gh.putFile(state.cfg, path, encoded, 'Kommentar von ' + PS.name());
+      saved = await PS.data.addComment(item.id, text, PS.name());
     } catch (error) {
       PS.toast(PS.escapeError(error), 'error');
       nodes.commentSend.disabled = false;
@@ -614,11 +598,7 @@
       return;
     }
 
-    // The next poll would bring it too, but a comment that does not appear the
-    // moment you send it reads as lost. Show it now; the sha arrives later.
-    item.comments.push({
-      photoId: item.id, at: when, stamp: '', author: PS.name(), path: path, sha: null, text: text
-    });
+    item.comments.push(saved);
     nodes.commentText.value = '';
     nodes.commentSend.disabled = false;
     nodes.commentSend.textContent = 'Senden';
@@ -628,14 +608,13 @@
   }
 
   async function removeComment(item, comment) {
-    if (!comment.sha) return; // just posted; it will be removable after the next refresh
     try {
-      await PS.gh.deleteFile(state.cfg, comment.path, comment.sha, 'Kommentar entfernt');
+      await PS.data.removeComment(comment);
     } catch (error) {
       PS.toast(PS.escapeError(error), 'error');
       return;
     }
-    item.comments = item.comments.filter(function (other) { return other.path !== comment.path; });
+    item.comments = item.comments.filter(function (other) { return other.id !== comment.id; });
     renderComments();
     updateCommentButton(item);
     render();
@@ -649,6 +628,11 @@
     var face = item && PS.people.avatar(item.uploader, 26);
     nodes.lbFace.classList.toggle('is-hidden', !face);
     if (face) nodes.lbFace.appendChild(face);
+  }
+
+  /** Did this account write it? The server enforces the same answer. */
+  function mine(authorId) {
+    return !!(authorId && state.me && authorId === state.me.id);
   }
 
   function updateCommentButton(item) {
@@ -693,26 +677,15 @@
     nodes.confirmGo.textContent = 'Wird gelöscht …';
 
     try {
-      // Thumbnail first, mirroring the upload order. The gallery lists
-      // thumbnails, so it disappears the moment the first call lands; if the
-      // second one fails, what is left over is an invisible photo rather than
-      // a tile that opens into nothing.
-      await PS.gh.deleteFile(state.cfg, item.thumbPath, item.thumbSha, 'Foto entfernt (' + item.uploader + ')');
-      await PS.gh.deleteFile(state.cfg, item.photoPath, item.photoSha, 'Foto entfernt (' + item.uploader + ')');
-      // Otherwise the thread outlives the photo it belonged to.
-      for (var c = 0; c < (item.comments || []).length; c++) {
-        var comment = item.comments[c];
-        if (comment.sha) await PS.gh.deleteFile(state.cfg, comment.path, comment.sha, 'Kommentar entfernt');
-      }
+      // The comments go with it on their own: the database cascades them when
+      // the photo row disappears.
+      await PS.data.removePhoto(item);
     } catch (error) {
       hideConfirm();
       PS.toast(PS.escapeError(error), 'error');
-      if (!PS.mayWrite()) nodes.lbDelete.classList.add('is-hidden');
       return;
     }
 
-    PS.gh.forgetBlob(item.thumbSha);
-    PS.gh.forgetBlob(item.photoSha);
     state.items = state.items.filter(function (other) { return other.id !== item.id; });
     hideConfirm();
     closeLightbox();
@@ -720,5 +693,5 @@
     PS.toast('Foto gelöscht.');
   }
 
-  PS.requireAccess(document.getElementById('app'), boot);
+  PS.requireSignIn(document.getElementById('app'), boot);
 })(typeof globalThis !== 'undefined' ? globalThis : this);
