@@ -14,6 +14,8 @@ app/      die Seite, die GitHub Pages ausliefert
 tools/    Testsuiten, Setup-Skript, lokaler Server
 ```
 
+Bereiche: **Alben** (`index.html`) und **Pinnwand** (`board.html`).
+
 ---
 
 
@@ -51,6 +53,14 @@ wifi they are all sharing. Each photo is re-encoded to a 2560px long edge
 the upload survives a bad connection. The re-encode also strips EXIF, which
 means **GPS coordinates never leave the phone** — worth knowing, because most
 photos taken at home carry a home address.
+
+**The pinboard is shaped like the comments.** A post is one file —
+`board/20260808T041500__Maria__4f2a.md`, with a `.jpg` of the same stem when it
+carries a picture. Two files sharing a stem rather than a folder, so the tree
+listing already says who posted, when, and whether there is a photo; only the
+text and the image cost a request, and only for posts on screen. Nothing is
+ever rewritten, so two people posting in the same second cannot lose each
+other's words.
 
 **One repository, several albums.** Each one owns a corner of it:
 

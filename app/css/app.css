@@ -352,6 +352,76 @@ img { display: block; max-width: 100%; }
   .lightbox__nav { opacity: 0.25; }
 }
 
+/* --- the bar along the bottom --------------------------------------------- */
+
+.nav {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  z-index: 30;
+  display: flex;
+  border-top: 1px solid var(--line);
+  background: rgba(16, 15, 14, 0.94);
+  backdrop-filter: blur(12px);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.nav__item {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 8px 4px 9px;
+  color: var(--ink-dim);
+  text-decoration: none;
+  font-size: 11px;
+}
+.nav__item.is-current { color: var(--accent); }
+.nav__icon { font-size: 19px; line-height: 1; }
+
+/* Room for the bar, plus the notch on phones that have one. */
+.feed { padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
+
+/* --- the pinboard --------------------------------------------------------- */
+
+.compose { border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; background: var(--surface); }
+.compose.is-readonly { opacity: 0.5; pointer-events: none; }
+.compose .field { margin-top: 10px; }
+.compose__actions { display: flex; gap: 8px; margin-top: 10px; }
+.compose__actions .btn { flex: 1; }
+.compose__picked {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 8px; padding: 6px 6px 6px 12px;
+  border-radius: 10px; background: var(--surface-2);
+  font-size: 13px;
+}
+
+.board { max-width: 620px; margin: 0 auto; padding-left: var(--pad); padding-right: var(--pad); }
+
+.post {
+  position: relative;
+  margin-top: 12px;
+  padding: 12px 34px 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.post--face { padding-left: 56px; }
+.post--face .avatar { position: absolute; left: 14px; top: 13px; }
+
+.post__head { display: flex; gap: 8px; align-items: baseline; }
+.post__who { font-size: 14px; font-weight: 600; }
+.post__when { font-size: 11px; color: var(--ink-dim); }
+.post__text { margin: 4px 0 0; font-size: 15px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }
+.post__text:empty { display: none; }
+
+.post__image {
+  width: 100%;
+  margin-top: 10px;
+  border-radius: 10px;
+  background: var(--surface-2);
+}
+
 /* --- the shelf of albums -------------------------------------------------- */
 
 .topbar__brand { display: flex; align-items: center; gap: 6px; }
@@ -428,7 +498,9 @@ img { display: block; max-width: 100%; }
 
 /* --- "who are you" picker ------------------------------------------------- */
 
-.whorow { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+/* Face and name belong together; the button is what gets pushed away. */
+.whorow { display: flex; align-items: center; gap: 10px; }
+.whorow .btn { margin-left: auto; }
 .who__current { font-size: 17px; font-family: var(--display); }
 
 .who {

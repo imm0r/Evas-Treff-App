@@ -932,6 +932,78 @@ const LINK = (page, extra = '') =>
   await page.context().close();
 }
 
+// --- 3m. the pinboard ------------------------------------------------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  repo.add('people/photo.jpg', await makeJpeg(600, 400, 30));
+  repo.add('people/people.json', Buffer.from(JSON.stringify({
+    photo: 'people/photo.jpg', people: [{ name: 'Ines', x: 0.3, y: 0.4 }, { name: 'Stefan', x: 0.7, y: 0.3 }]
+  }), 'utf8'));
+  repo.add('board/20260807T210000__Ines__1a2b.md', Buffer.from('Danke fürs Ausrichten! ❤️', 'utf8'));
+  repo.add('board/20260806T090000__Stefan__7f3c.md', Buffer.from('Wer hat den Grill?', 'utf8'));
+  repo.add('board/20260806T090000__Stefan__7f3c.jpg', await makeJpeg(500, 400, 210));
+
+  await page.goto(LINK('board.html'));
+  await page.waitForSelector('.post');
+  check('board: shows the posts', (await page.locator('.post').count()) === 2);
+  check('board: newest first',
+    (await page.locator('.post__who').first().textContent()) === 'Ines');
+  await page.waitForFunction(() => [...document.querySelectorAll('.post__text')].every((t) => t.textContent !== '…'));
+  check('board: the text arrives',
+    (await page.locator('.post__text').first().textContent()) === 'Danke fürs Ausrichten! ❤️');
+  await page.waitForFunction(() => {
+    const i = document.querySelector('.post__image');
+    return i && i.naturalWidth > 0;
+  }, { timeout: 15000 });
+  check('board: a post can carry a picture', true);
+  check('board: with the faces beside the names',
+    (await page.locator('.post .avatar').count()) === 2);
+  check('board: and a bar to get back to the albums',
+    await page.isVisible('.nav__item[href="index.html"]'));
+
+  // Posting
+  await page.evaluate(() => localStorage.setItem('ps:name', 'Stefan'));
+  await page.reload();
+  await page.waitForSelector('.post');
+  await page.fill('.compose textarea', 'Nächstes Jahr wieder!');
+  await page.click('.compose .btn--primary');
+  await page.waitForFunction(() => document.querySelectorAll('.post').length === 3, { timeout: 20000 });
+
+  const written = repo.puts.filter((p) => p.path.startsWith('board/'));
+  check('board: a post is one file',
+    written.length === 1 && /^board\/\d{8}T\d{6}__Stefan__[0-9a-f]{4}\.md$/.test(written[0].path),
+    JSON.stringify(written.map((p) => p.path)));
+  check('board: with the text as written', written[0].text === 'Nächstes Jahr wieder!', written[0].text);
+
+  // Deleting: only your own, and the picture goes with it.
+  const mine = await page.locator('.post', { has: page.locator('.comment__remove') }).count();
+  check('board: only your own posts offer a delete', mine === 2, `${mine} von 3`);
+  page.on('dialog', (d) => d.accept());
+  await page.locator('.post', { hasText: 'Wer hat den Grill?' }).locator('.comment__remove').click();
+  await page.waitForFunction(() => document.querySelectorAll('.post').length === 2, { timeout: 15000 });
+  check('board: deleting takes the picture with it',
+    repo.deletes.length === 2 && repo.deletes.some((p) => p.endsWith('.jpg')) &&
+    repo.deletes.some((p) => p.endsWith('.md')),
+    JSON.stringify(repo.deletes));
+  check('board: no page errors', page._errors.length === 0, page._errors.join('\n'));
+  await page.context().close();
+}
+
+// --- 3n. a view-only code reads the board but cannot post -----------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo, { writable: false });
+  repo.add('board/20260807T210000__Ines__1a2b.md', Buffer.from('Hallo!', 'utf8'));
+  await page.goto(LINK('board.html'));
+  await page.waitForSelector('.post');
+  await page.evaluate(() => localStorage.setItem('ps:ability', 'read'));
+  check('board: a view-only code still reads it', (await page.locator('.post').count()) === 1);
+  await page.context().close();
+}
+
 // --- 4. a read-only code cannot upload ------------------------------------
 {
   const page = await newPage();
