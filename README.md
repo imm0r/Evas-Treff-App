@@ -10,8 +10,9 @@ JavaScript und die Tests dazu. Der Schlüssel in `app/supabase.js` ist der
 öffentliche „publishable key"; ohne Anmeldung liefert er null Zeilen.
 
 ```
-app/      die Seite, die GitHub Pages ausliefert
-tools/    Testsuiten, Migration, lokaler Server
+app/                    die Seite, die GitHub Pages ausliefert
+supabase/migrations/    das Datenbankschema und die Zugriffsregeln
+tools/                  Testsuiten, Migration, lokaler Server
 ```
 
 Bereiche: **Alben** (`index.html`), **Hochladen** (`upload.html`),
@@ -88,9 +89,11 @@ Both halves already exist; this is what to do if you ever rebuild them.
 
 ### 1. The Supabase project
 
-Any region. The migrations in the project's history create `people`, `invites`,
-`profiles`, `albums`, `photos`, `comments` and `board_posts`, all with row level
-security on, plus the two private buckets `photos` and `people`.
+Any region. Apply `supabase/migrations/` in order — that creates `people`,
+`invites`, `profiles`, `albums`, `photos`, `comments` and `board_posts`, all
+with row level security on, plus the two private buckets `photos` and `people`.
+Each file says why it exists; the ones that only revoke a grant are there
+because the database linter found something, and the comment names what.
 
 Put the project URL and the **publishable** key in `app/supabase.js`, and the
 same host in the `connect-src` and `img-src` of every page's CSP.

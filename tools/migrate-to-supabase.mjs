@@ -237,4 +237,16 @@ for (const post of board) {
 }
 if (board.length) console.log(`\nPinnwand: ${board.length} Beiträge geprüft`);
 
+/*
+ * Everything above arrives with a name and no account, because the old app
+ * never had accounts — and a photo with no `uploader_id` is one its own
+ * uploader cannot delete, since the rule asks for `uploader_id = auth.uid()`.
+ *
+ * A trigger claims those rows the moment somebody ties their account to a
+ * face, which covers everyone who signs in after this runs. This call covers
+ * the ones who already had.
+ */
+await rest('/rest/v1/rpc/claim_all', { method: 'POST', body: '{}' });
+console.log('Alte Fotos und Kommentare den Konten zugeordnet.');
+
 console.log('\nFertig.');
