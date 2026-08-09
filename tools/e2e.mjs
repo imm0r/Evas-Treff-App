@@ -831,6 +831,10 @@ const LINK = (page, extra = '') =>
   await stubGitHub(page, repo);
   const jpeg = await makeJpeg(400, 300, 90);
 
+  repo.add('people/photo.jpg', await makeJpeg(600, 400, 30));
+  repo.add('people/people.json', Buffer.from(JSON.stringify({
+    photo: 'people/photo.jpg', people: [{ name: 'Ines', x: 0.3, y: 0.4 }]
+  }), 'utf8'));
   repo.add('albums/evas-treff/album.json',
     Buffer.from(JSON.stringify({ title: "Eva's Treff", date: '2026-08-07' }), 'utf8'));
   repo.add('albums/weihnachten/album.json',
@@ -855,6 +859,12 @@ const LINK = (page, extra = '') =>
   check('albums: each counts its own photos',
     counts[0].includes('2 Fotos') && counts[1].includes('1 Foto'), JSON.stringify(counts));
   check('albums: no photos leak onto the shelf', (await page.locator('.tile').count()) === 0);
+
+  // The family photo arrives after the shelf. Its redraw must not paint an
+  // album over it.
+  await page.waitForTimeout(600);
+  check('albums: the shelf survives the faces loading',
+    (await page.locator('.shelf__card').count()) === 2 && !(await page.isVisible('.act-add-photos')));
 
   await page.locator('.shelf__card').nth(1).click();
   await page.waitForSelector('.tile.is-loaded');

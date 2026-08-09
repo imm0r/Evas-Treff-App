@@ -124,8 +124,13 @@
       if (!state.people) {
         state.people = await PS.people.load(state.cfg, tree.entries);
         // The photo lands a moment after the grid. Redraw then, so the faces
-        // appear beside the names without holding up the album.
-        if (state.people) PS.people.whenReady(function () { render(); refreshLightboxFace(); });
+        // appear beside the names without holding up the album — but only if
+        // an album is open, or this would paint one over the shelf.
+        if (state.people) PS.people.whenReady(function () {
+          if (!state.album) return;
+          render();
+          refreshLightboxFace();
+        });
       }
       state.pending = null;
       nodes.newPill.classList.add('is-hidden');
