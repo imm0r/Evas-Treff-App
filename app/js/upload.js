@@ -17,6 +17,7 @@
 
   var state = {
     cfg: null,
+    album: null,      // which album the photos go into
     people: null,     // the album's face map, or null when it has none
     typing: false,    // someone chose to type their name instead
     known: new Set(),   // content hashes already in the album
@@ -36,6 +37,21 @@
     try {
       await PS.gh.verify(cfg);
       var tree = await PS.gh.tree(cfg);
+
+      var shelf = await PS.albums.load(cfg, tree.entries);
+      state.album = chooseAlbum(shelf);
+      if (!state.album) {
+        nodes.status.textContent = shelf.length
+          ? 'Welches Album? Bitte über die Übersicht auswählen.'
+          : 'Es gibt noch kein Album. Leg auf der Übersicht eins an.';
+        nodes.status.classList.add('is-error');
+        nodes.back.href = 'index.html';
+        return;
+      }
+      PS.album.setRoot(PS.albums.prefix(state.album));
+      nodes.title.textContent = state.album.title;
+      nodes.back.href = 'index.html?album=' + encodeURIComponent(state.album.slug);
+
       state.known = PS.album.hashes(tree.entries);
       state.people = await PS.people.load(cfg, tree.entries);
       nodes.status.textContent = state.known.size
@@ -86,6 +102,17 @@
     nodes.whoLabel.textContent = PS.name() ? PS.name() : 'Wer bist du?';
     nodes.whoButton.textContent = PS.name() ? 'Nicht ' + PS.name() + '?' : 'Auf dem Foto antippen';
     nodes.name.classList.toggle('is-hidden', !!PS.name() && !state.typing);
+  }
+
+  /** Same rule as the gallery: ?album names one, a lone album needs no naming. */
+  function chooseAlbum(shelf) {
+    var wanted = new URLSearchParams(location.search).get('album');
+    if (wanted !== null) {
+      var hit = null;
+      shelf.forEach(function (album) { if (album.slug === wanted) hit = album; });
+      return hit;
+    }
+    return shelf.length === 1 ? shelf[0] : null;
   }
 
   function renderShell() {
@@ -169,13 +196,11 @@
       accept(Array.from(e.dataTransfer.files || []));
     });
 
+    nodes.title = el('h1', { class: 'topbar__title', text: state.cfg.title });
+    nodes.back = el('a', { class: 'btn btn--ghost', href: 'index.html' }, ['Zum Album']);
     app.appendChild(el('header', { class: 'topbar' }, [
-      el('div', { class: 'topbar__brand' }, [
-        el('h1', { class: 'topbar__title', text: state.cfg.title })
-      ]),
-      el('div', { class: 'topbar__actions' }, [
-        el('a', { class: 'btn btn--ghost', href: 'index.html' }, ['Zum Album'])
-      ])
+      el('div', { class: 'topbar__brand' }, [nodes.title]),
+      el('div', { class: 'topbar__actions' }, [nodes.back])
     ]));
     app.appendChild(el('div', { class: 'panel' }, [
       el('label', { class: 'label' }, ['Wer lädt hoch?']),
@@ -354,7 +379,10 @@
         text: ' ' + PS.plural(failed, 'Foto hat', 'Fotos haben') + ' nicht geklappt.'
       }));
     }
-    nodes.summary.appendChild(el('a', { class: 'btn btn--primary', href: 'index.html' }, ['Album ansehen']));
+    nodes.summary.appendChild(el('a', {
+      class: 'btn btn--primary',
+      href: state.album && state.album.slug ? 'index.html?album=' + encodeURIComponent(state.album.slug) : 'index.html'
+    }, ['Album ansehen']));
   }
 
   var guarded = false;

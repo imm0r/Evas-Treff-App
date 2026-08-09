@@ -824,6 +824,104 @@ const LINK = (page, extra = '') =>
   await page.context().close();
 }
 
+// --- 3j. several albums under one roof ------------------------------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  const jpeg = await makeJpeg(400, 300, 90);
+
+  repo.add('albums/evas-treff/album.json',
+    Buffer.from(JSON.stringify({ title: "Eva's Treff", date: '2026-08-07' }), 'utf8'));
+  repo.add('albums/weihnachten/album.json',
+    Buffer.from(JSON.stringify({ title: 'Weihnachten 2025', date: '2025-12-24' }), 'utf8'));
+  for (const [album, time, id] of [
+    ['evas-treff', '120001', 'aaaaaaaa'], ['evas-treff', '120002', 'bbbbbbbb'],
+    ['weihnachten', '180000', 'cccccccc']
+  ]) {
+    const day = album === 'evas-treff' ? '2026-08-07' : '2025-12-24';
+    const name = `${day}/${time}__Ines__${id}.jpg`;
+    repo.add(`albums/${album}/photos/${name}`, jpeg);
+    repo.add(`albums/${album}/thumbs/${name}`, jpeg);
+  }
+
+  await page.goto(LINK('index.html'));
+  await page.waitForSelector('.shelf__card');
+  check('albums: the shelf shows both', (await page.locator('.shelf__card').count()) === 2);
+  const titles = await page.locator('.shelf__title').allTextContents();
+  check('albums: newest first', titles[0] === "Eva's Treff" && titles[1] === 'Weihnachten 2025',
+    JSON.stringify(titles));
+  const counts = await page.locator('.shelf__count').allTextContents();
+  check('albums: each counts its own photos',
+    counts[0].includes('2 Fotos') && counts[1].includes('1 Foto'), JSON.stringify(counts));
+  check('albums: no photos leak onto the shelf', (await page.locator('.tile').count()) === 0);
+
+  await page.locator('.shelf__card').nth(1).click();
+  await page.waitForSelector('.tile.is-loaded');
+  check('albums: opening one shows only its photos', (await page.locator('.tile').count()) === 1,
+    page.url());
+  check('albums: and names it', (await page.textContent('.topbar__title')) === 'Weihnachten 2025');
+  check('albums: with a way back', await page.isVisible('.topbar__back'));
+
+  // Uploading has to land inside the album that was open, not at the root.
+  await page.click('.act-add-photos');
+  await page.waitForSelector('.drop');
+  await page.fill('.field[type=text]', 'Basti');
+  await page.setInputFiles('input[type=file][multiple]', [
+    { name: 'x.jpg', mimeType: 'image/jpeg', buffer: await makeJpeg(500, 400, 10) }
+  ]);
+  await page.waitForSelector('.job--done', { timeout: 30000 });
+  check('albums: the upload goes into the open album',
+    repo.puts.every((p) => p.path.startsWith('albums/weihnachten/')),
+    JSON.stringify(repo.puts.map((p) => p.path)));
+  check('albums: no page errors', page._errors.length === 0, page._errors.join('\n'));
+  await page.context().close();
+}
+
+// --- 3k. making a new album -----------------------------------------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  const jpeg = await makeJpeg(300, 300, 30);
+  repo.add('albums/alt/album.json', Buffer.from(JSON.stringify({ title: 'Alt', date: '2020-01-01' }), 'utf8'));
+  repo.add('albums/alt/photos/2020-01-01/120000__Ines__11111111.jpg', jpeg);
+  repo.add('albums/alt/thumbs/2020-01-01/120000__Ines__11111111.jpg', jpeg);
+  repo.add('albums/zwei/album.json', Buffer.from(JSON.stringify({ title: 'Zwei', date: '2021-01-01' }), 'utf8'));
+
+  page.on('dialog', (d) => d.accept('Sommerurlaub 2027'));
+  await page.goto(LINK('index.html'));
+  await page.waitForSelector('.shelf__card');
+  await page.click('.act-new-album');
+  await page.waitForURL(/upload\.html\?album=sommerurlaub-2027/, { timeout: 15000 });
+
+  const made = repo.puts.find((p) => p.path.endsWith('album.json'));
+  check('albums: a new one is a manifest and nothing else',
+    made.path === 'albums/sommerurlaub-2027/album.json', made.path);
+  check('albums: the title is kept as typed',
+    JSON.parse(made.text).title === 'Sommerurlaub 2027', made.text);
+  check('albums: and it opens ready to fill', page.url().includes('upload.html?album=sommerurlaub-2027'));
+  await page.context().close();
+}
+
+// --- 3l. a repository from before albums existed --------------------------
+{
+  const page = await newPage();
+  const repo = makeRepo();
+  await stubGitHub(page, repo);
+  const jpeg = await makeJpeg(300, 300, 200);
+  repo.add('photos/2026-08-07/120000__Ines__99999999.jpg', jpeg);
+  repo.add('thumbs/2026-08-07/120000__Ines__99999999.jpg', jpeg);
+
+  await page.goto(LINK('index.html'));
+  await page.waitForSelector('.tile.is-loaded');
+  check('albums: the old layout opens straight into its photos',
+    (await page.locator('.tile').count()) === 1 && (await page.locator('.shelf__card').count()) === 0);
+  check('albums: and hides a way back that leads nowhere',
+    !(await page.isVisible('.topbar__back')));
+  await page.context().close();
+}
+
 // --- 4. a read-only code cannot upload ------------------------------------
 {
   const page = await newPage();

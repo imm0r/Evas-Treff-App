@@ -16,6 +16,17 @@
 
   var PS = global.PS || (global.PS = {});
 
+  /*
+   * Everything an album owns hangs under one prefix:
+   *
+   *   albums/evas-treff/photos|thumbs|comments/...
+   *
+   * The prefix is empty for a repository from before there were several
+   * albums, where those folders sit at the root. Both layouts are read, so a
+   * repository set up by tools/setup.sh keeps working without being moved.
+   */
+  var root = '';
+
   var PHOTO_DIR = 'photos';
   var THUMB_DIR = 'thumbs';
   var COMMENT_DIR = 'comments';
@@ -60,6 +71,11 @@
 
     COMMENT_DIR: COMMENT_DIR,
 
+    /** Point the album functions at one album's corner of the repository. */
+    setRoot: function (prefix) { root = prefix || ''; },
+    root: function () { return root; },
+    dir: function (name) { return root + name; },
+
     /** Path of a comment file, relative to the repo root. */
     commentPath: function (photoId, when, author, nonce) {
       var stamp = [
@@ -71,13 +87,14 @@
         String(when.getMinutes()).padStart(2, '0'),
         String(when.getSeconds()).padStart(2, '0')
       ].join('');
-      return COMMENT_DIR + '/' + photoId + '/' + stamp + '__' + slug(author) + '__' + nonce + '.txt';
+      return root + COMMENT_DIR + '/' + photoId + '/' + stamp + '__' + slug(author) + '__' + nonce + '.txt';
     },
 
     /** Turn a `comments/...` tree entry into a comment, or null. */
     parseComment: function (entry) {
-      if (entry.path.slice(0, COMMENT_DIR.length + 1) !== COMMENT_DIR + '/') return null;
-      var match = COMMENT_PATTERN.exec(entry.path.slice(COMMENT_DIR.length + 1));
+      var head = root + COMMENT_DIR + '/';
+      if (entry.path.slice(0, head.length) !== head) return null;
+      var match = COMMENT_PATTERN.exec(entry.path.slice(head.length));
       if (!match) return null;
       var t = match[2];
       return {
@@ -93,13 +110,14 @@
 
     /** Path of a photo, relative to the repo root. */
     path: function (dir, day, time, uploader, hash) {
-      return dir + '/' + day + '/' + time + '__' + slug(uploader) + '__' + hash + '.jpg';
+      return root + dir + '/' + day + '/' + time + '__' + slug(uploader) + '__' + hash + '.jpg';
     },
 
     /** Turn a `thumbs/...` tree entry into a gallery item, or null if it is not one. */
     parse: function (entry) {
-      if (entry.path.slice(0, THUMB_DIR.length + 1) !== THUMB_DIR + '/') return null;
-      var match = PATTERN.exec(entry.path.slice(THUMB_DIR.length + 1));
+      var head = root + THUMB_DIR + '/';
+      if (entry.path.slice(0, head.length) !== head) return null;
+      var match = PATTERN.exec(entry.path.slice(head.length));
       if (!match) return null;
       return {
         id: match[4],
@@ -108,7 +126,7 @@
         uploader: unslug(match[3]),
         thumbSha: entry.sha,
         thumbPath: entry.path,
-        photoPath: PHOTO_DIR + '/' + entry.path.slice(THUMB_DIR.length + 1),
+        photoPath: root + PHOTO_DIR + '/' + entry.path.slice(head.length),
         photoSha: null,
         size: entry.size || 0
       };
@@ -121,9 +139,10 @@
      * thumbnail that opens into nothing).
      */
     fromTree: function (entries) {
+      var photoHead = root + PHOTO_DIR + '/';
       var photoShas = new Map();
       entries.forEach(function (entry) {
-        if (entry.path.slice(0, PHOTO_DIR.length + 1) === PHOTO_DIR + '/') {
+        if (entry.path.slice(0, photoHead.length) === photoHead) {
           photoShas.set(entry.path, entry.sha);
         }
       });

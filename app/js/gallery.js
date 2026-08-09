@@ -20,6 +20,8 @@
     filter: null,
     pending: null,   // items found by polling but not shown yet
     people: null,    // the album's face map, or null when it has none
+    shelf: null,     // every album in the repository
+    album: null,     // the one being shown, or null while showing the shelf
     lightbox: -1
   };
 
@@ -52,18 +54,24 @@
       onclick: function () { adopt(); }
     });
 
+    nodes.topTitle = el('h1', { class: 'topbar__title', text: state.cfg.title });
+    nodes.back = el('a', { class: 'btn btn--ghost topbar__back is-hidden', href: 'index.html', title: 'Alle Alben' }, ['‹']);
+    nodes.addPhotos = el('a', { class: 'btn btn--primary act-add-photos is-hidden', href: 'upload.html' }, [
+      // Two labels: on a narrow phone the full wording pushes the album
+      // title into an ellipsis, and the title is what tells you where you are.
+      el('span', { class: 'btn__wide', text: 'Fotos hinzufügen' }),
+      el('span', { class: 'btn__narrow', text: '+ Fotos' })
+    ]);
+    nodes.newAlbum = el('button', { class: 'btn btn--primary act-new-album is-hidden', onclick: askNewAlbum }, [
+      el('span', { class: 'btn__wide', text: 'Neues Album' }),
+      el('span', { class: 'btn__narrow', text: '+ Album' })
+    ]);
+
     app.appendChild(el('header', { class: 'topbar' }, [
-      el('div', { class: 'topbar__brand' }, [
-        el('h1', { class: 'topbar__title', text: state.cfg.title }),
-        nodes.count
-      ]),
+      el('div', { class: 'topbar__brand' }, [nodes.back, el('div', {}, [nodes.topTitle, nodes.count])]),
       el('div', { class: 'topbar__actions' }, [
-        el('a', { class: 'btn btn--primary', href: 'upload.html' }, [
-          // Two labels: on a narrow phone the full wording pushes the album
-          // title into an ellipsis, and the title is what tells you where you are.
-          el('span', { class: 'btn__wide', text: 'Fotos hinzufügen' }),
-          el('span', { class: 'btn__narrow', text: '+ Fotos' })
-        ]),
+        nodes.addPhotos,
+        nodes.newAlbum,
         el('button', { class: 'btn btn--ghost', title: 'Neu laden', onclick: function () { load(false); } }, ['⟳'])
       ])
     ]));
@@ -71,6 +79,26 @@
     app.appendChild(nodes.newPill);
     app.appendChild(nodes.feed);
     buildLightbox(app);
+  }
+
+  /**
+   * ?album=<slug> names one. Without it: a repository holding exactly one
+   * album opens it straight away — which is also what the links already in the
+   * family's group chat do — and anything else shows the shelf.
+   */
+  function chooseAlbum(shelf) {
+    var wanted = new URLSearchParams(location.search).get('album');
+    if (wanted !== null) {
+      var hit = null;
+      shelf.forEach(function (album) { if (album.slug === wanted) hit = album; });
+      return hit;
+    }
+    return shelf.length === 1 ? shelf[0] : null;
+  }
+
+  function albumHref(album, page) {
+    var base = page || 'index.html';
+    return album && album.slug ? base + '?album=' + encodeURIComponent(album.slug) : base;
   }
 
   function setStatus(content) {
@@ -87,7 +115,12 @@
     }
     try {
       var tree = await PS.gh.tree(state.cfg);
-      state.items = PS.album.fromTree(tree.entries);
+
+      state.shelf = await PS.albums.load(state.cfg, tree.entries);
+      state.album = chooseAlbum(state.shelf);
+      PS.album.setRoot(PS.albums.prefix(state.album));
+
+      state.items = state.album ? PS.album.fromTree(tree.entries) : [];
       if (!state.people) {
         state.people = await PS.people.load(state.cfg, tree.entries);
         // The photo lands a moment after the grid. Redraw then, so the faces
@@ -96,7 +129,7 @@
       }
       state.pending = null;
       nodes.newPill.classList.add('is-hidden');
-      render();
+      if (state.album) render(); else renderShelf();
       if (tree.truncated) {
         PS.toast('Das Album ist so groß, dass GitHub die Liste gekürzt hat — es fehlen Fotos.', 'error');
       }
@@ -114,6 +147,7 @@
 
   /** Background refresh: never disturb the scroll position, just offer the update. */
   async function poll() {
+    if (!state.album) return; // nothing ticking on the shelf
     try {
       var tree = await PS.gh.tree(state.cfg);
       var next = PS.album.fromTree(tree.entries);
@@ -145,6 +179,13 @@
   }
 
   function render() {
+    nodes.topTitle.textContent = state.album ? state.album.title : state.cfg.title;
+    nodes.addPhotos.href = albumHref(state.album, 'upload.html');
+    nodes.addPhotos.classList.remove('is-hidden');
+    nodes.newAlbum.classList.add('is-hidden');
+    // Only offer the way back when there is more than one album to go back to.
+    nodes.back.classList.toggle('is-hidden', state.shelf.length < 2);
+
     renderFilters();
     state.visible = state.filter
       ? state.items.filter(function (i) { return i.uploader === state.filter; })
@@ -161,7 +202,7 @@
       setStatus(el('div', { class: 'status' }, [
         el('div', { class: 'status__emoji', text: '📷' }),
         el('p', { text: state.items.length ? 'Von dieser Person ist noch nichts dabei.' : 'Noch keine Fotos hier.' }),
-        el('a', { class: 'btn btn--primary', href: 'upload.html' }, ['Das erste Foto hochladen'])
+        el('a', { class: 'btn btn--primary', href: albumHref(state.album, 'upload.html') }, ['Das erste Foto hochladen'])
       ]));
       return;
     }
@@ -174,6 +215,64 @@
         grid.appendChild(tileFor(item));
       });
       nodes.feed.appendChild(grid);
+    });
+  }
+
+  /** The shelf: one card per album, cover and count straight out of the tree. */
+  function renderShelf() {
+    nodes.filters.innerHTML = '';
+    nodes.count.textContent = state.shelf.length
+      ? PS.plural(state.shelf.length, 'Album', 'Alben') : '';
+    nodes.topTitle.textContent = state.cfg.title;
+    nodes.addPhotos.classList.add('is-hidden');
+    nodes.newAlbum.classList.remove('is-hidden');
+
+    nodes.feed.innerHTML = '';
+    if (!state.shelf.length) {
+      setStatus(el('div', { class: 'status' }, [
+        el('div', { class: 'status__emoji', text: '📚' }),
+        el('p', { text: 'Noch kein Album angelegt.' }),
+        el('button', { class: 'btn btn--primary', onclick: askNewAlbum }, ['Erstes Album anlegen'])
+      ]));
+      return;
+    }
+
+    var shelf = el('div', { class: 'shelf' });
+    state.shelf.forEach(function (album) {
+      var cover = el('div', { class: 'shelf__cover' });
+      var card = el('a', { class: 'shelf__card', href: albumHref(album) }, [
+        cover,
+        el('div', { class: 'shelf__meta' }, [
+          el('strong', { class: 'shelf__title', text: album.title }),
+          el('span', {
+            class: 'shelf__count',
+            text: (album.date ? PS.formatDayShort(album.date) + ' · ' : '') +
+              PS.plural(album.count, 'Foto', 'Fotos')
+          })
+        ])
+      ]);
+      shelf.appendChild(card);
+      if (album.cover) {
+        PS.gh.blobUrl(state.cfg, album.cover).then(function (url) {
+          cover.style.backgroundImage = 'url(' + url + ')';
+          cover.classList.add('is-loaded');
+        }).catch(function () { /* a coverless card is still a card */ });
+      }
+    });
+    nodes.feed.appendChild(shelf);
+  }
+
+  function askNewAlbum() {
+    var title = prompt('Wie soll das Album heißen?');
+    if (!title || !title.trim()) return;
+    var today = new Date();
+    var date = [today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0')].join('-');
+    PS.albums.create(state.cfg, title.trim(), date).then(function (album) {
+      location.href = albumHref(album, 'upload.html');
+    }).catch(function (error) {
+      PS.toast(PS.escapeError(error), 'error');
     });
   }
 

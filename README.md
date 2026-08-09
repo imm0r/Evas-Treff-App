@@ -52,9 +52,23 @@ the upload survives a bad connection. The re-encode also strips EXIF, which
 means **GPS coordinates never leave the phone** — worth knowing, because most
 photos taken at home carry a home address.
 
+**One repository, several albums.** Each one owns a corner of it:
+
+```
+albums/<slug>/album.json          { "title": "...", "date": "..." }
+albums/<slug>/photos|thumbs|comments/...
+people/                           the faces, shared by every album
+```
+
+Titles, dates, photo counts and cover images all come out of the one tree
+listing the app already fetches, so opening the shelf costs nothing extra. A
+repository with its photos at the root — the layout before there were several
+albums, and what `tools/setup.sh` still creates — reads as a single album, so
+nothing has to be moved.
+
 **The file name is the database.** A photo is stored as
-`photos/2026-08-07/153012__Oma-Lotte__a1b2c3d4.jpg`: day, time, who uploaded it,
-and a hash of the content. That buys three things a metadata file would not.
+`albums/<slug>/photos/2026-08-07/153012__Oma-Lotte__a1b2c3d4.jpg`: day, time,
+who uploaded it, and a hash of the content. That buys three things a metadata file would not.
 The gallery can group, caption and sort everything from one API call. Two phones
 uploading at the same moment cannot collide, because they only ever create new
 paths. And re-uploading the same photo produces the same name, so a duplicate is

@@ -352,6 +352,45 @@ img { display: block; max-width: 100%; }
   .lightbox__nav { opacity: 0.25; }
 }
 
+/* --- the shelf of albums -------------------------------------------------- */
+
+.topbar__brand { display: flex; align-items: center; gap: 6px; }
+.topbar__back { padding: 6px 12px; font-size: 20px; line-height: 1; }
+
+.shelf {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px;
+  padding: 4px var(--pad) 0;
+}
+
+@media (min-width: 700px) {
+  .shelf { grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+}
+
+.shelf__card {
+  display: block;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--ink);
+  text-decoration: none;
+}
+.shelf__card:hover { border-color: var(--accent); }
+
+.shelf__cover {
+  aspect-ratio: 4 / 3;
+  background: var(--surface-2) center/cover no-repeat;
+  opacity: 0;
+  transition: opacity 220ms ease;
+}
+.shelf__cover.is-loaded { opacity: 1; }
+
+.shelf__meta { padding: 10px 12px 12px; }
+.shelf__title { display: block; font-family: var(--display); font-size: 16px; }
+.shelf__count { display: block; margin-top: 2px; font-size: 12px; color: var(--ink-dim); }
+
 /* A face next to a name, cropped out of the group photo. Always decoration:
    the name stays readable on its own, for albums that have no photo. */
 .avatar {
