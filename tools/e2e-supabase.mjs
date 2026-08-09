@@ -76,7 +76,7 @@ async function makeJpeg(page, w, h, hue, label) {
 /** Everything the app is allowed to know, and a log of what it asked for. */
 function makeBackend() {
   return {
-    otpRequests: [], inserts: [], deletes: [], signCalls: 0,
+    otpRequests: [], inserts: [], deletes: [], uploads: [], signCalls: 0,
     albums: [], photos: [], comments: [], people: [],
     profile: { id: 'user-1', email: 'ich@example.de', is_admin: true, person_id: 'p1', people: { name: 'Maria' } }
   };
@@ -128,6 +128,19 @@ async function stub(page, back) {
       }
       const album = (url.searchParams.get('album_id') || '').replace('eq.', '');
       return json(200, back.photos.filter((x) => x.album_id === album));
+    }
+    if (p === '/rest/v1/photos' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'photos', row });
+      const saved = Object.assign({ id: 'ph-' + (back.photos.length + 1), comments: [] }, row);
+      back.photos.push(saved);
+      return json(201, [saved]);
+    }
+    if (p.startsWith('/storage/v1/object/photos/') && request.method() === 'POST') {
+      const key = decodeURIComponent(p.slice('/storage/v1/object/photos/'.length));
+      back.uploads.push(key);
+      images.set(key, request.postDataBuffer() || Buffer.alloc(0));
+      return json(200, { Key: 'photos/' + key });
     }
     if (p === '/rest/v1/people') return json(200, back.people);
     if (p === '/rest/v1/profiles') return json(200, [back.profile]);
@@ -283,7 +296,72 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await context.close();
 }
 
-// --- 3. nothing is reachable without a session -----------------------------
+// --- 3. hochladen ----------------------------------------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 0 }] }
+  ];
+  back.people = [{ name: 'Maria', face_x: 0.78, face_y: 0.39, aliases: [] }];
+
+  await page.goto(origin + '/upload.html' + SESSION);
+  // The camera button is hidden on anything with a mouse, so wait on the other.
+  await page.waitForSelector('.drop__buttons .btn:not(.btn--camera):not([disabled])');
+
+  // The account already knows who this is, so the page must not ask again -
+  // the old version's whole job was collecting a name.
+  check('hochladen: der Name kommt aus dem Konto',
+    (await page.textContent('.who__current')) === 'Maria');
+  check('hochladen: kein Namensfeld mehr', await page.locator('.panel > .field').isHidden());
+  check('hochladen: das Album steht im Titel',
+    (await page.textContent('.topbar__title')) === "Eva's Treff");
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  const shot = await makeJpeg(scratch, 1200, 900, 120, 'Kuchen');
+  await scratch.close();
+
+  await page.setInputFiles('input[type=file]:not([capture])',
+    { name: 'IMG_0042.jpg', mimeType: 'image/jpeg', buffer: shot });
+  await page.waitForSelector('.job--done');
+
+  const row = back.inserts.find((i) => i.table === 'photos').row;
+  check('hochladen: landet im geöffneten Album', row.album_id === 'alb-1', JSON.stringify(row));
+  check('hochladen: mit dem eigenen Konto als Urheber',
+    row.uploader_id === 'user-1' && row.uploader_name === 'Maria', JSON.stringify(row));
+  check('hochladen: verkleinert auf die lange Kante',
+    row.width === 1200 && row.height === 900, `${row.width}x${row.height}`);
+
+  // Bild vor Zeile, und beide unter demselben Hash: eine Zeile, die auf eine
+  // fehlende Datei zeigt, wäre eine Kachel, die sich nicht öffnen lässt.
+  check('hochladen: Bild und Vorschau vor der Zeile',
+    back.uploads.length === 2 &&
+    back.uploads[0] === `evas-treff/${row.content_hash}.jpg` &&
+    back.uploads[1] === `evas-treff/${row.content_hash}_thumb.jpg`,
+    JSON.stringify(back.uploads));
+  check('hochladen: die Zeile zeigt auf genau diese Dateien',
+    row.storage_path === back.uploads[0] && row.thumb_path === back.uploads[1]);
+
+  // Dasselbe Foto nochmal: derselbe Inhalt, derselbe Hash, keine zweite Kopie.
+  await page.setInputFiles('input[type=file]:not([capture])',
+    { name: 'IMG_0042-kopie.jpg', mimeType: 'image/jpeg', buffer: shot });
+  await page.waitForSelector('.job--skip');
+  check('hochladen: dasselbe Foto ein zweites Mal kostet nichts',
+    back.uploads.length === 2 && back.inserts.filter((i) => i.table === 'photos').length === 1,
+    JSON.stringify(back.uploads));
+
+  check('hochladen: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 4. nothing is reachable without a session -----------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
   const page = await context.newPage();
@@ -294,11 +372,13 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     if (!auth.includes('Bearer ')) reached.push(new URL(route.request().url()).pathname);
     return route.fulfill({ status: 401, headers: { 'Content-Type': 'application/json' }, body: '{}' });
   });
-  await page.goto(origin + '/index.html');
-  await page.waitForSelector('.gate');
-  await page.waitForTimeout(500);
-  check('ohne Anmeldung: es wird nichts abgefragt',
-    reached.length === 0, JSON.stringify(reached));
+  for (const where of ['/index.html', '/upload.html']) {
+    await page.goto(origin + where);
+    await page.waitForSelector('.gate');
+    await page.waitForTimeout(300);
+    check('ohne Anmeldung: ' + where + ' fragt nichts ab',
+      reached.length === 0, JSON.stringify(reached));
+  }
   await context.close();
 }
 

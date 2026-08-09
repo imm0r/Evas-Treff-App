@@ -210,6 +210,13 @@
     return response.json();
   };
 
+  sb.patch = async function (table, query, patch) {
+    await call('/rest/v1/' + table + '?' + query, {
+      method: 'PATCH',
+      body: JSON.stringify(patch)
+    });
+  };
+
   sb.remove = async function (table, query) {
     await call('/rest/v1/' + table + '?' + query, { method: 'DELETE' });
   };

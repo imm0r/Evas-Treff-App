@@ -196,5 +196,36 @@
     };
   };
 
+  /** Tie this account to a face on the group photo. */
+  data.linkMe = async function (personName) {
+    var user = await PS.sb.loadUser();
+    var rows = await PS.sb.select('people', 'select=id&name=eq.' + encodeURIComponent(personName));
+    if (!rows.length) return null;
+    await PS.sb.patch('profiles', 'id=eq.' + user.id, { person_id: rows[0].id });
+    return personName;
+  };
+
+  // --- the guest list -------------------------------------------------------
+
+  data.invites = async function () {
+    return PS.sb.select('invites',
+      'select=email,is_admin,invited_at,used_at,person_id,people(name)&order=invited_at');
+  };
+
+  data.invite = async function (email, personName, isAdmin) {
+    var personId = null;
+    if (personName) {
+      var rows = await PS.sb.select('people', 'select=id&name=eq.' + encodeURIComponent(personName));
+      personId = rows.length ? rows[0].id : null;
+    }
+    return PS.sb.insert('invites',
+      { email: email, person_id: personId, is_admin: !!isAdmin },
+      { upsert: true, query: 'on_conflict=email' });
+  };
+
+  data.uninvite = async function (email) {
+    await PS.sb.remove('invites', 'email=eq.' + encodeURIComponent(email));
+  };
+
   PS.data = data;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

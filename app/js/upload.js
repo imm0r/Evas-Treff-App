@@ -1,10 +1,13 @@
 /*
  * The upload page — the part relatives actually touch.
  *
- * Design constraint: someone's aunt, on a phone, on hotel wifi, tapping a link
- * from WhatsApp. So: no account, no app, one name field, one button. Each
- * photo is shrunk on the device before it goes anywhere, which is what makes
- * uploading forty holiday photos over a bad connection survivable.
+ * Design constraint: someone's aunt, on a phone, on hotel wifi. So: one button
+ * and nothing to fill in. Who you are comes from the account you signed in
+ * with, not from a text field, so a name can no longer be typed three
+ * different ways by the third relative.
+ *
+ * Each photo is shrunk on the device before it goes anywhere, which is what
+ * makes uploading forty holiday photos over a bad connection survivable.
  */
 (function (global) {
   'use strict';
@@ -16,11 +19,11 @@
   var THUMB_EDGE = 480, THUMB_QUALITY = 0.7;
 
   var state = {
-    cfg: null,
+    me: null,
     album: null,      // which album the photos go into
-    people: null,     // the album's face map, or null when it has none
+    people: null,     // the face map, or null when the hub has no group photo
     typing: false,    // someone chose to type their name instead
-    known: new Set(),   // content hashes already in the album
+    known: new Set(), // content hashes already in the album
     jobs: [],
     running: 0,
     uploaded: 0,
@@ -29,16 +32,22 @@
 
   var nodes = {};
 
-  async function boot(cfg) {
-    state.cfg = cfg;
-    document.title = 'Hochladen · ' + cfg.title;
+  async function boot() {
+    try {
+      state.me = await PS.data.me();
+    } catch (error) {
+      PS.sb.signOut();
+      location.reload();
+      return;
+    }
+    // The account's own name wins over anything typed on this device: it comes
+    // from the invitation, and the server records it on everything you write.
+    if (state.me && state.me.name) PS.name(state.me.name);
+
     renderShell();
 
     try {
-      await PS.gh.verify(cfg);
-      var tree = await PS.gh.tree(cfg);
-
-      var shelf = await PS.albums.load(cfg, tree.entries);
+      var shelf = await PS.data.albums();
       state.album = chooseAlbum(shelf);
       if (!state.album) {
         nodes.status.textContent = shelf.length
@@ -48,12 +57,12 @@
         nodes.back.href = 'index.html';
         return;
       }
-      PS.album.setRoot(PS.albums.prefix(state.album));
       nodes.title.textContent = state.album.title;
+      document.title = 'Hochladen · ' + state.album.title;
       nodes.back.href = 'index.html?album=' + encodeURIComponent(state.album.slug);
 
-      state.known = PS.album.hashes(tree.entries);
-      state.people = await PS.people.load(cfg, tree.entries);
+      state.known = await PS.data.knownHashes(state.album.id);
+      state.people = await PS.people.load();
       nodes.status.textContent = state.known.size
         ? 'Im Album sind schon ' + PS.plural(state.known.size, 'Foto', 'Fotos') + '.'
         : 'Noch keine Fotos im Album — mach den Anfang.';
@@ -69,8 +78,9 @@
     PS.people.whenReady(showName);
     showName();
 
-    // First visit, and this album has a group photo: ask by face rather than
-    // making someone type their own name on a phone keyboard.
+    // Signed in, but the account is not tied to a face yet: ask once, by
+    // tapping the group photo, and remember the answer on the profile so no
+    // other device ever asks again.
     if (!PS.name() && state.people) askWho();
   }
 
@@ -81,12 +91,15 @@
   }
 
   function askWho() {
-    PS.people.ask(state.cfg, state.people, function (name) {
+    PS.people.ask(state.people, function (name) {
       PS.name(name);
       nodes.name.value = name;
       state.typing = false;
       showName();
       updatePickState();
+      // Best effort: the upload works either way, and a face that failed to
+      // stick is a question asked twice, not a lost photo.
+      PS.data.linkMe(name).catch(function () {});
     }, function () {
       state.typing = true;
       nodes.name.classList.remove('is-hidden');
@@ -176,7 +189,7 @@
       onclick: opens(nodes.input)
     }, ['Fotos auswählen']);
 
-    nodes.status = el('p', { class: 'hint', text: 'Verbinde mit dem Album …' });
+    nodes.status = el('p', { class: 'hint', text: 'Album wird geladen …' });
     nodes.list = el('div', { class: 'queue' });
     nodes.summary = el('div', { class: 'summary is-hidden' });
 
@@ -196,7 +209,7 @@
       accept(Array.from(e.dataTransfer.files || []));
     });
 
-    nodes.title = el('h1', { class: 'topbar__title', text: state.cfg.title });
+    nodes.title = el('h1', { class: 'topbar__title', text: 'Hochladen' });
     nodes.back = el('a', { class: 'btn btn--ghost', href: 'index.html' }, ['Zum Album']);
     app.appendChild(el('header', { class: 'topbar' }, [
       el('div', { class: 'topbar__brand' }, [nodes.title]),
@@ -225,6 +238,7 @@
 
   function requireName() {
     if (PS.name()) return true;
+    if (state.people) { askWho(); return false; }
     nodes.name.focus();
     nodes.name.classList.add('is-error');
     setTimeout(function () { nodes.name.classList.remove('is-error'); }, 1600);
@@ -305,18 +319,12 @@
 
       var taken = (converted && converted.takenAt) || PS.exifDate(buffer) ||
         new Date(job.file.lastModified || Date.now());
-      var day = [
-        taken.getFullYear(),
-        String(taken.getMonth() + 1).padStart(2, '0'),
-        String(taken.getDate()).padStart(2, '0')
-      ].join('-');
-      var time = [taken.getHours(), taken.getMinutes(), taken.getSeconds()]
-        .map(function (n) { return String(n).padStart(2, '0'); }).join('');
 
       var decoded = converted ||
         await PS.decodeImage(new Blob([buffer], { type: job.file.type || 'image/jpeg' }));
-      var photo, thumb;
+      var photo, thumb, size;
       try {
+        size = PS.fitSize(decoded, PHOTO_EDGE);
         photo = await PS.encodeJpeg(decoded, PHOTO_EDGE, PHOTO_QUALITY);
         thumb = await PS.encodeJpeg(decoded, THUMB_EDGE, THUMB_QUALITY);
       } finally {
@@ -326,14 +334,15 @@
       job._thumb.style.backgroundImage = 'url(' + URL.createObjectURL(thumb) + ')';
 
       mark(job, 'wird hochgeladen … (' + PS.formatBytes(photo.size) + ')', 'busy');
-      var photoPath = PS.album.path(PS.album.PHOTO_DIR, day, time, job.uploader, hash);
-      var thumbPath = PS.album.path(PS.album.THUMB_DIR, day, time, job.uploader, hash);
-
-      // Photo before thumbnail: the gallery lists thumbnails, so if the second
-      // request never lands the half-uploaded photo stays hidden instead of
-      // showing a tile that opens into nothing.
-      await PS.gh.putFile(state.cfg, photoPath, await PS.toBase64(photo), 'Foto von ' + job.uploader);
-      await PS.gh.putFile(state.cfg, thumbPath, await PS.toBase64(thumb), 'Vorschau von ' + job.uploader);
+      await PS.data.addPhoto(state.album, {
+        hash: hash,
+        full: photo,
+        thumb: thumb,
+        takenAt: taken,
+        uploader: job.uploader,
+        width: size.width,
+        height: size.height
+      });
 
       state.known.add(hash);
       state.uploaded++;
@@ -398,5 +407,5 @@
     event.returnValue = '';
   }
 
-  PS.requireAccess(document.getElementById('app'), boot);
+  PS.requireSignIn(document.getElementById('app'), boot);
 })(typeof globalThis !== 'undefined' ? globalThis : this);
