@@ -86,6 +86,21 @@ async function makeJpeg(page, w, h, hue, label) {
   }, [w, h, hue, label]));
 }
 
+/** Width and height straight out of a JPEG's frame header. */
+function jpegSize(bytes) {
+  for (let i = 2; i + 9 < bytes.length;) {
+    if (bytes[i] !== 0xff) return null;
+    const marker = bytes[i + 1];
+    const length = (bytes[i + 2] << 8) | bytes[i + 3];
+    if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+      return { height: (bytes[i + 5] << 8) | bytes[i + 6], width: (bytes[i + 7] << 8) | bytes[i + 8] };
+    }
+    if (marker === 0xda) return null;
+    i += 2 + length;
+  }
+  return null;
+}
+
 /** Everything the app is allowed to know, and a log of what it asked for. */
 function makeBackend() {
   return {
@@ -279,6 +294,19 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   check('rückkehr: und überleben einen Neuladen',
     await page.evaluate(() => !!JSON.parse(localStorage.getItem('sb:session') || 'null')));
 
+  // Derselbe Link, aber die Seite steht schon offen: der Browser lädt bei
+  // einem reinen Fragmentwechsel nicht neu, also muss die App das selbst tun.
+  // Genau daran ist die Vorgängerversion einmal gescheitert.
+  await page.evaluate(() => localStorage.removeItem('sb:session'));
+  await page.evaluate((h) => { location.hash = h; }, SESSION.slice(1));
+  let reopened = true;
+  try {
+    await page.waitForFunction(() => !!localStorage.getItem('sb:session'), null, { timeout: 5000 });
+    await page.waitForSelector('.shelf__card', { timeout: 5000 });
+  } catch { reopened = false; }
+  check('rückkehr: der Link wirkt auch auf einer offenen Seite',
+    reopened && page.url() === origin + '/index.html', page.url());
+
   check('regal: zeigt beide Alben', (await page.locator('.shelf__card').count()) === 2);
   check('regal: mit Titelbild aus signierter URL',
     (await page.locator('.shelf__cover.is-loaded').count()) >= 1);
@@ -406,6 +434,51 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
 
   await shot(page, '3-hochladen');
   check('hochladen: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 3b. ein HEIC kommt als JPEG an ----------------------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  const back = makeBackend();
+  await stub(page, back);
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 0 }] }
+  ];
+
+  await page.goto(origin + '/upload.html' + SESSION);
+  await page.waitForSelector('.drop__buttons .btn:not(.btn--camera):not([disabled])');
+
+  // A real file out of a HEIF encoder, with a capture date in its metadata -
+  // the format no Chromium browser can open on its own.
+  const heic = await readFile(new URL('./fixtures/photo-with-exif.heic', import.meta.url));
+  check('heic: the fixture really is one',
+    heic.subarray(4, 8).toString() === 'ftyp', heic.subarray(4, 12).toString());
+
+  await page.setInputFiles('input[type=file]:not([capture])',
+    { name: 'IMG_4711.HEIC', mimeType: 'image/heic', buffer: heic });
+  await page.waitForSelector('.job--done', { timeout: 60000 });
+
+  const row = back.inserts.find((i) => i.table === 'photos').row;
+  const bytes = images.get(row.storage_path);
+  check('heic: it went up as a JPEG', bytes[0] === 0xff && bytes[1] === 0xd8,
+    Array.from(bytes.subarray(0, 4)).map((b) => b.toString(16)).join(' '));
+  const dim = jpegSize(bytes);
+  check('heic: at the right size', dim.width === 1200 && dim.height === 900, JSON.stringify(dim));
+  // The capture date lives in a HEIF metadata item, not an APP1 segment. Get
+  // that wrong and every iPhone photo is filed under the day it was copied.
+  // The row stores UTC, the capture time is local, so compare it the way the
+  // gallery will read it back rather than by string.
+  const taken = new Date(row.taken_at);
+  const day = [taken.getFullYear(), String(taken.getMonth() + 1).padStart(2, '0'),
+    String(taken.getDate()).padStart(2, '0')].join('-');
+  check('heic: filed under the day it was taken, not today',
+    day === '2026-08-07' && taken.getHours() === 21 && taken.getMinutes() === 33,
+    `${day} ${taken.getHours()}:${taken.getMinutes()}`);
+  check('heic: keine Fehler', errors.length === 0, errors.join('\n'));
   await context.close();
 }
 

@@ -1,7 +1,7 @@
 {
-  "name": "Fotoalbum",
-  "short_name": "Fotos",
-  "description": "Privates Fotoalbum für die Familie",
+  "name": "Familie",
+  "short_name": "Familie",
+  "description": "Fotos und Pinnwand der Familie",
   "start_url": "index.html",
   "scope": "./",
   "display": "standalone",

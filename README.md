@@ -1,256 +1,156 @@
 # Eva's Treff
 
-Ein privates Fotoalbum, komplett auf GitHub gehostet — und der Quellcode dazu.
+Der Familien-Hub: Fotoalben, Pinnwand, Gästeliste. Statische Seite auf GitHub
+Pages, Daten in Supabase.
 
 **Live:** https://imm0r.github.io/Evas-Treff-App/
-**Album:** [`imm0r/Evas-Treff`](https://github.com/imm0r/Evas-Treff) (privat)
 
-In diesem Repository liegt **kein Foto und kein Zugangscode**. Nur HTML,
-JavaScript und die Tests dazu — deshalb darf es öffentlich sein, während das
-Album privat bleibt. Ohne Link mit Zugangscode zeigt die Seite nichts an.
+In diesem Repository liegt **kein Foto und kein Geheimnis** — nur HTML,
+JavaScript und die Tests dazu. Der Schlüssel in `app/supabase.js` ist der
+öffentliche „publishable key"; ohne Anmeldung liefert er null Zeilen.
 
 ```
 app/      die Seite, die GitHub Pages ausliefert
-tools/    Testsuiten, Setup-Skript, lokaler Server
+tools/    Testsuiten, Migration, lokaler Server
 ```
 
-Bereiche: **Alben** (`index.html`) und **Pinnwand** (`board.html`).
+Bereiche: **Alben** (`index.html`), **Hochladen** (`upload.html`),
+**Pinnwand** (`board.html`) und **Familie** (`admin.html`, nur für Admins).
 
 ---
 
-
-A private photo album for a family gathering, hosted entirely on GitHub.
-
-Guests open a link, type their name, and pick photos. No account, no app, no
-server. The photos land in a **private** repository; the gallery is a static
-page that can only load them with the access code baked into the share link.
+A family hub for a couple of dozen relatives: photo albums, a pinboard, and the
+guest list that decides who may see any of it. A static page on GitHub Pages in
+front of a Supabase project.
 
 ```
-    share link (#k=token)
-            |
-   +--------+--------+            +---------------------------+
-   |  static app     |  HTTPS     |  private repo             |
-   |  GitHub Pages   +----------->|  photos/  thumbs/         |
-   |  (public, no    |  api.      |  (never public)           |
-   |   secrets)      |  github    +---------------------------+
-   +-----------------+  .com
+   +-----------------+          +------------------------------+
+   |  static app     |  HTTPS   |  Supabase                    |
+   |  GitHub Pages   +--------->|  Postgres + row level security|
+   |  (public, no    |          |  Auth (magic links)          |
+   |   secrets)      |          |  Storage (private buckets)   |
+   +-----------------+          +------------------------------+
 ```
 
 ## Why it is built this way
 
-**No backend, and no build step.** Three HTML files, a handful of scripts, one
-stylesheet. Nothing to deploy, nothing to keep running, nothing to pay for
-after the party is over. Open `app/index.html` straight from disk and it still
-works.
+**No backend of our own, and no build step.** Four HTML files, a handful of
+scripts, one stylesheet. Supabase is reached over plain HTTP — PostgREST,
+Storage and Auth are all just endpoints — rather than through the client
+library, so there is nothing to compile and the Content-Security-Policy names
+exactly one host.
 
 One dependency, and only when it is needed: `vendor/libheif.wasm` converts
 HEIC, which no Chromium browser can open — see below.
 
+**No passwords anywhere.** You type your address, you get a link, you are in.
+Nobody in this family should have to invent or remember a password, and a
+password is the part of a login that gets reused, written down and leaked.
+`create_user` is on, but a trigger rejects any signup whose address is not on
+the guest list, so "anyone can request a link" does not mean "anyone can get
+in".
+
+**The guest list is the whole membership mechanism.** An invitation may also
+name a face on the family photo, and then the app greets that person by name on
+their very first visit — they never see a "wer bist du?" at all.
+
+**Who you are is not typed.** The account carries the name, and every row
+records its author server-side. Deleting your own photo or comment is a rule in
+the database, not a hidden button: the server refuses anyone else, so the UI can
+hide the button without pretending that is the protection.
+
+**Faces instead of a name field.** Sign-in ties an account to a person on one
+group photo, and from then on that person's face appears beside their name
+everywhere — on tiles, in filter chips, over comments, on the pinboard. A
+`people` row carries earlier spellings too (`aliases`), so correcting a name
+does not split someone in two.
+
 **Photos are shrunk on the phone, before upload.** A modern phone photo is
-4-8 MB. Fifty guests would produce a repository nobody can clone over the hotel
-wifi they are all sharing. Each photo is re-encoded to a 2560px long edge
-(~400-700 KB) plus a 480px thumbnail, so the grid costs kilobytes per photo and
-the upload survives a bad connection. The re-encode also strips EXIF, which
-means **GPS coordinates never leave the phone** — worth knowing, because most
-photos taken at home carry a home address.
+4–8 MB. Each one is re-encoded to a 2560px long edge (~400–700 KB) plus a 480px
+thumbnail, so the grid costs kilobytes per photo and the upload survives a bad
+connection. The re-encode also strips EXIF, which means **GPS coordinates never
+leave the phone** — worth knowing, because most photos taken at home carry a
+home address.
 
-**The pinboard is shaped like the comments.** A post is one file —
-`board/20260808T041500__Maria__4f2a.md`, with a `.jpg` of the same stem when it
-carries a picture. Two files sharing a stem rather than a folder, so the tree
-listing already says who posted, when, and whether there is a photo; only the
-text and the image cost a request, and only for posts on screen. Nothing is
-ever rewritten, so two people posting in the same second cannot lose each
-other's words.
+**The buckets are private, and images arrive as signed URLs.** One signing call
+covers a whole album, however many photos are in it; after that the browser
+fetches and caches them like any other image. That is one request per screen
+instead of one per tile.
 
-**One repository, several albums.** Each one owns a corner of it:
-
-```
-albums/<slug>/album.json          { "title": "...", "date": "..." }
-albums/<slug>/photos|thumbs|comments/...
-people/                           the faces, shared by every album
-```
-
-Titles, dates, photo counts and cover images all come out of the one tree
-listing the app already fetches, so opening the shelf costs nothing extra. A
-repository with its photos at the root — the layout before there were several
-albums, and what `tools/setup.sh` still creates — reads as a single album, so
-nothing has to be moved.
-
-**The file name is the database.** A photo is stored as
-`albums/<slug>/photos/2026-08-07/153012__Oma-Lotte__a1b2c3d4.jpg`: day, time,
-who uploaded it, and a hash of the content. That buys three things a metadata file would not.
-The gallery can group, caption and sort everything from one API call. Two phones
-uploading at the same moment cannot collide, because they only ever create new
-paths. And re-uploading the same photo produces the same name, so a duplicate is
-a no-op instead of a second copy.
-
-**Comments are files too.** A comment lands at
-`comments/<photo-id>/20260807T235900__Jonas__4f2a.txt`. A shared `comments.json`
-would need read-modify-write, and two relatives typing at the same moment would
-silently lose one of the two — separate files cannot collide. The tree listing
-the gallery already fetches carries every author and timestamp, so the thread
-count on a tile costs nothing; only the text itself is a request, and only once
-a photo is open.
-
-**Two links, not one.** Almost everyone only wants to look. A read-only link
-cannot overwrite or delete anything, even if it ends up in the wrong group chat.
+**Photos are named by their content.** `albums/<slug>/<hash>.jpg`, with a
+`_thumb.jpg` beside it. Re-uploading the same file lands on the same name and
+is skipped, and the row is written only after both objects are up: a file with
+no row is invisible, a row with no file is a tile that opens into nothing.
 
 ## Setup
 
-### The short way
+Both halves already exist; this is what to do if you ever rebuild them.
 
-```
-./tools/setup.sh evas-treff evas-treff-app "Eva's Treff"
-```
+### 1. The Supabase project
 
-Needs the [GitHub CLI](https://cli.github.com) and `gh auth login`. It creates
-the private photo repository and a public one for the app, points the app at
-the photos, publishes it to GitHub Pages (switching Pages on by itself), and
-prints the URL. Safe to re-run.
+Any region. The migrations in the project's history create `people`, `invites`,
+`profiles`, `albums`, `photos`, `comments` and `board_posts`, all with row level
+security on, plus the two private buckets `photos` and `people`.
 
-Two repositories, because Pages needs a paid plan to publish from a private
-one. The split is the right shape anyway: the public repo holds only HTML and
-JavaScript — no photos, no tokens.
+Put the project URL and the **publishable** key in `app/supabase.js`, and the
+same host in the `connect-src` and `img-src` of every page's CSP.
 
-Then create the two tokens by hand (step 2 below) — **GitHub has no API for
-minting personal access tokens**, deliberately, since a token that could create
-tokens would be a master key. The script prints the exact click path.
+### 2. Authentication
 
-### The long way
+- **Site URL**: the Pages URL, e.g. `https://imm0r.github.io/Evas-Treff-App/`
+- **Redirect URLs**: add `https://imm0r.github.io/Evas-Treff-App/**` — the app
+  asks to come back to the page you started on, so a link opened on a phone
+  lands where you were rather than always on the front page.
 
-Roughly ten minutes, once.
+### 3. The first admin
 
-### 1. Create the album repository
+One row in `invites` with `is_admin = true`. Everyone after that can be invited
+from the **Familie** page.
 
-A **new, private** repository — not an existing one. Everything in it becomes
-readable by anyone holding a share link, so it should contain nothing else.
-
-```
-gh repo create familienfotos --private --add-readme
-```
-
-### 2. Create the two access tokens
-
-GitHub → Settings → Developer settings → **Fine-grained personal access tokens**
-→ *Generate new token*. Twice:
-
-| Token | Repository access | Permissions | Give it to |
-|---|---|---|---|
-| view | Only `familienfotos` | Contents: **Read-only** | everyone |
-| upload | Only `familienfotos` | Contents: **Read and write** | whoever contributes photos |
-
-Set an **expiry** — the end of the month is usually right. When it lapses the
-links stop working by themselves, which is the behaviour you want for something
-that was shared into a group chat.
-
-Do not use a classic token, and do not grant access to "all repositories". A
-fine-grained token scoped to this one repository is the whole security model.
-
-### 3. Publish the app
-
-Either from this repository:
+### 4. Publish the app
 
 - Settings → Pages → Source: **GitHub Actions**
 - Actions → *Deploy* → **Run workflow**
 
-…or copy `app/` anywhere else that serves static files. It is plain
-HTML; there is no build. To skip hosting entirely, hand out `app/` as a folder —
-`index.html` works from `file://` too (see *Limitations* for the small print).
-
-Optionally fill in `app/config.js` with the repo name and album title. It only
-saves typing: the share link carries the same values.
-
-### 4. Hand out the links
-
-Open `share.html`, paste the repository name and the two tokens, and it builds
-both links — with a QR code, a copy button, and a WhatsApp button. That page
-never talks to GitHub; it only assembles URLs, and the tokens stay in that
-browser.
-
-### 5. What to tell everyone
-
-> Unsere Fotos vom Treffen sind hier: **\<Link>**
-> Einfach antippen — kein Konto, keine App. Wer selbst Fotos dazulegen will,
-> nimmt diesen Link: **\<Upload-Link>**, Namen eintragen, Fotos auswählen,
-> fertig.
-
-## How it works
-
-- **Reading** is one `git/trees?recursive=1` call for the whole album, then one
-  blob request per thumbnail — issued lazily as tiles scroll into view, because
-  on a private repository every image costs an authenticated request. Blobs are
-  addressed by content hash, so the browser's Cache Storage entry for a sha can
-  never be stale; a second visit costs one API call in total.
-- **Writing** is two `PUT /contents` calls per photo — full size first, then the
-  thumbnail. The gallery lists thumbnails, so an upload interrupted between the
-  two leaves the photo invisible rather than showing a tile that opens into
-  nothing. Concurrent uploads race for the branch tip; a 409 is retried with
-  backoff.
-- **The access code** travels in the URL fragment, which browsers never send to
-  a server — not even as a `Referer`. On arrival it is moved into
-  `localStorage` and stripped from the address bar, so a screenshot of the
-  gallery does not hand out the album.
-- **The capture date** is read from the JPEG's EXIF block before re-encoding.
-  `File.lastModified` is not the same thing — on photos that synced from a
-  camera or came through a messenger it is the copy date, which would file the
-  whole afternoon under today.
+…or copy `app/` anywhere else that serves static files. There is no build.
 
 ## Limitations
 
-- **Album size.** Keep it under a couple of thousand photos (~1 GB); beyond
-  that, cloning gets unpleasant and GitHub starts writing emails about
-  repository size. One repository per event is the natural unit.
-- **Rate limit.** 5000 API requests per hour, per token. A guest browsing a
-  300-photo album for the first time spends ~300 of them; afterwards the cache
-  serves them. Heavy simultaneous first-time browsing on a shared token can hit
-  the limit — the app says so plainly and names the wait.
-- **Anyone with the upload link can also delete**, because GitHub's Contents
-  permission is not separable that way. Hand it out accordingly, and prefer the
-  view link.
-- **One access code per browser.** Opening the view link replaces whatever was
-  stored, so a phone that could upload a minute ago is read-only afterwards.
-  Opening the upload link again restores it. The app notices which of the two
-  it is holding — it learns from what its writes actually do, because GitHub's
-  `permissions` field is not documented to reflect a fine-grained token's
-  access — and hides the delete button rather than offering one that refuses.
-- **Deleting is a courtesy, not a permission.** The gallery offers a delete
-  button only on photos this browser uploaded, but everyone shares one token
-  and the name is self-declared, so the restriction lives in the UI and nowhere
-  else. Anyone holding the upload link can remove anything through the API.
-  Deleted photos stay in the repository's history and can be restored with git —
-  just not from inside the app.
-- **From `file://`** the gallery works, but `crypto.subtle` and the Cache API
-  need a secure context: uploads fall back to a non-cryptographic content
-  fingerprint (fine for naming, still deduplicates) and nothing is cached
-  between visits. `npm run serve` gives you a proper `http://localhost`.
+- **From `file://`** the pages load, but `crypto.subtle` needs a secure context,
+  so uploads fall back to a non-cryptographic content fingerprint (fine for
+  naming, still deduplicates). `npm run serve` gives you a proper
+  `http://localhost`.
 - **HEIC** is converted on the device. No Chromium browser can decode it —
   not `<img>`, not `createImageBitmap` — so the app carries libheif compiled to
   WebAssembly and does it itself. That megabyte is fetched only when someone
-  actually picks a HEIC, and the upload page's Content-Security-Policy allows
-  `wasm-unsafe-eval` for it. The capture date is read out of the HEIF container
-  too, or every iPhone photo would be filed under the day it was copied off the
-  phone.
+  actually picks a HEIC, and the upload page's CSP allows `wasm-unsafe-eval`
+  for it. The capture date is read out of the HEIF container too, or every
+  iPhone photo would be filed under the day it was copied off the phone.
+- **Deleting is final.** The row goes, its comments cascade, the files follow.
+  There is no history to restore from any more.
+- **Leaked-password protection is off**, because it needs a paid plan. It also
+  protects nothing here: there are no passwords.
 
 ## Tests
 
 ```
 npm install && npx playwright install chromium
-pip install qrcode          # reference implementation for the QR check
 npm test
 ```
 
-Three suites, all of which check the code against something other than itself:
+Two suites, both of which check the code against something other than itself:
 
-- `tools/qr-verify.mjs` — the QR encoder, diffed module-for-module against
-  python-qrcode across every version 1-20 and all eight masks, with payloads
-  filled to capacity. A wrong encoder still draws a plausible square, so
-  "it renders" proves nothing.
 - `tools/exif-test.mjs` — hand-assembled JPEG headers in both byte orders,
   including the ones that must return "no idea": dead camera clocks, dates in
   the future, and every possible truncation of a valid file.
-- `tools/e2e.mjs` — a real Chromium against a stubbed `api.github.com`. Covers
-  the parts that only exist at runtime: the fragment being scrubbed, thumbnails
-  served from cache on a second visit, a 12 MP photo actually arriving as a
-  2560px JPEG, uploading the same file twice being a no-op, a read-only token
-  producing a message that tells you what to do, and the Content-Security-Policy
-  not breaking any of it.
+- `tools/e2e-supabase.mjs` — a real Chromium against a stubbed Supabase. Covers
+  what only exists at runtime: the magic link's tokens being scrubbed from the
+  address bar (and working when the page is already open), twenty photos costing
+  the same number of signing calls as two, a 12 MP photo actually arriving as a
+  2560px JPEG, a HEIC arriving as one at all, uploading the same file twice
+  being a no-op, the delete button appearing only on your own things, the guest
+  list refusing a non-admin, and a signed-out page requesting nothing at all.
+
+`SHOTS=<dir> node tools/e2e-supabase.mjs` also writes a picture of every screen.
+Assertions keep missing what one look catches immediately, and screenshots have
+found more layout bugs in this app than the tests have.

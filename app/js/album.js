@@ -1,192 +1,37 @@
 /*
- * The naming scheme is the database.
+ * Names and days — the two things the screens agree on.
  *
- *   photos/2026-08-07/153012__Oma-Lotte__a1b2c3d4.jpg
- *   thumbs/2026-08-07/153012__Oma-Lotte__a1b2c3d4.jpg
- *
- * Day, time, who uploaded it and a content hash, all in the path. That buys
- * three things worth more than a tidier schema: the gallery can group and
- * caption every photo from a single tree listing with no extra requests; two
- * phones uploading at once can never collide, because they only ever create
- * new paths; and re-uploading the same photo lands on the same name, so the
- * duplicate is a no-op instead of a second copy.
+ * A photo's uploader used to be a path segment, which is why a name has a
+ * canonical short form at all. That form outlived the paths: it is still how
+ * two spellings of the same person are recognised as one (see people.js), and
+ * still what turns an album title into something that fits in a URL.
  */
 (function (global) {
   'use strict';
 
   var PS = global.PS || (global.PS = {});
 
-  /*
-   * Everything an album owns hangs under one prefix:
-   *
-   *   albums/evas-treff/photos|thumbs|comments/...
-   *
-   * The prefix is empty for a repository from before there were several
-   * albums, where those folders sit at the root. Both layouts are read, so a
-   * repository set up by tools/setup.sh keeps working without being moved.
-   */
-  var root = '';
-
-  var PHOTO_DIR = 'photos';
-  var THUMB_DIR = 'thumbs';
-  var COMMENT_DIR = 'comments';
-  var PATTERN = /^(\d{4}-\d{2}-\d{2})\/(\d{6})__(.+?)__([0-9a-f]{8})\.jpg$/;
-
-  /*
-   * Comments follow the photos: one file each, never rewritten.
-   *
-   *   comments/a1b2c3d4/20260807T235900__Jonas__4f2a.txt
-   *            ^^^^^^^^ ^^^^^^^^^^^^^^^ ^^^^^ ^^^^
-   *            photo    when            who   collision guard
-   *
-   * A shared comments.json would need read-modify-write, and two relatives
-   * typing at the same moment would silently lose one of the two. Separate
-   * files cannot collide, and the tree listing the gallery already fetches
-   * carries every author and timestamp for free — only the text itself costs
-   * a request, and only once a photo is actually open.
-   */
-  var COMMENT_PATTERN = /^([0-9a-f]{8})\/(\d{8}T\d{6})__(.+?)__([0-9a-f]{4})\.txt$/;
-
-  /**
-   * Reduce a display name to something safe in a path while keeping it
-   * readable — umlauts survive, everything that could confuse a URL does not.
-   */
-  function slug(name) {
-    var cleaned = (name || '').normalize('NFC')
-      .replace(/[^\p{L}\p{N}]+/gu, '-')
-      .replace(/^-+|-+$/g, '')
-      .slice(0, 24);
-    return cleaned || 'Anonym';
-  }
-
-  function unslug(value) {
-    return value.replace(/-/g, ' ');
-  }
-
-  var album = {
-    PHOTO_DIR: PHOTO_DIR,
-    THUMB_DIR: THUMB_DIR,
-    slug: slug,
-    unslug: unslug,
-
-    COMMENT_DIR: COMMENT_DIR,
-
-    /** Point the album functions at one album's corner of the repository. */
-    setRoot: function (prefix) { root = prefix || ''; },
-    root: function () { return root; },
-    dir: function (name) { return root + name; },
-
-    /** Path of a comment file, relative to the repo root. */
-    commentPath: function (photoId, when, author, nonce) {
-      var stamp = [
-        when.getFullYear(),
-        String(when.getMonth() + 1).padStart(2, '0'),
-        String(when.getDate()).padStart(2, '0'),
-        'T',
-        String(when.getHours()).padStart(2, '0'),
-        String(when.getMinutes()).padStart(2, '0'),
-        String(when.getSeconds()).padStart(2, '0')
-      ].join('');
-      return root + COMMENT_DIR + '/' + photoId + '/' + stamp + '__' + slug(author) + '__' + nonce + '.txt';
-    },
-
-    /** Turn a `comments/...` tree entry into a comment, or null. */
-    parseComment: function (entry) {
-      var head = root + COMMENT_DIR + '/';
-      if (entry.path.slice(0, head.length) !== head) return null;
-      var match = COMMENT_PATTERN.exec(entry.path.slice(head.length));
-      if (!match) return null;
-      var t = match[2];
-      return {
-        photoId: match[1],
-        at: new Date(+t.slice(0, 4), +t.slice(4, 6) - 1, +t.slice(6, 8),
-          +t.slice(9, 11), +t.slice(11, 13), +t.slice(13, 15)),
-        stamp: t,
-        author: unslug(match[3]),
-        path: entry.path,
-        sha: entry.sha
-      };
-    },
-
-    /** Path of a photo, relative to the repo root. */
-    path: function (dir, day, time, uploader, hash) {
-      return root + dir + '/' + day + '/' + time + '__' + slug(uploader) + '__' + hash + '.jpg';
-    },
-
-    /** Turn a `thumbs/...` tree entry into a gallery item, or null if it is not one. */
-    parse: function (entry) {
-      var head = root + THUMB_DIR + '/';
-      if (entry.path.slice(0, head.length) !== head) return null;
-      var match = PATTERN.exec(entry.path.slice(head.length));
-      if (!match) return null;
-      return {
-        id: match[4],
-        day: match[1],
-        time: match[2],
-        uploader: unslug(match[3]),
-        thumbSha: entry.sha,
-        thumbPath: entry.path,
-        photoPath: root + PHOTO_DIR + '/' + entry.path.slice(head.length),
-        photoSha: null,
-        size: entry.size || 0
-      };
-    },
-
+  PS.album = {
     /**
-     * Build the gallery model from a tree listing: newest first, and only
-     * thumbs whose full-size photo actually made it up (an upload that died
-     * between the two commits should stay invisible rather than show a
-     * thumbnail that opens into nothing).
+     * Reduce a display name to something comparable while keeping it
+     * readable — umlauts survive, everything that could confuse a URL does not.
      */
-    fromTree: function (entries) {
-      var photoHead = root + PHOTO_DIR + '/';
-      var photoShas = new Map();
-      entries.forEach(function (entry) {
-        if (entry.path.slice(0, photoHead.length) === photoHead) {
-          photoShas.set(entry.path, entry.sha);
-        }
-      });
-
-      // Comments arrive in the same listing, so grouping them here costs
-      // nothing and spares the gallery a request per photo.
-      var comments = new Map();
-      entries.forEach(function (entry) {
-        var comment = album.parseComment(entry);
-        if (!comment) return;
-        if (!comments.has(comment.photoId)) comments.set(comment.photoId, []);
-        comments.get(comment.photoId).push(comment);
-      });
-      comments.forEach(function (list) {
-        list.sort(function (a, b) { return a.stamp < b.stamp ? -1 : 1; });
-      });
-
-      var items = [];
-      entries.forEach(function (entry) {
-        var item = album.parse(entry);
-        if (!item) return;
-        var sha = photoShas.get(item.photoPath);
-        if (!sha) return;
-        item.photoSha = sha;
-        item.comments = comments.get(item.id) || [];
-        items.push(item);
-      });
-
-      items.sort(function (a, b) {
-        if (a.day !== b.day) return a.day < b.day ? 1 : -1;
-        if (a.time !== b.time) return a.time < b.time ? 1 : -1;
-        return a.id < b.id ? -1 : 1;
-      });
-      return items;
+    slug: function (name) {
+      var cleaned = (name || '').normalize('NFC')
+        .replace(/[^\p{L}\p{N}]+/gu, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 24);
+      return cleaned || 'Anonym';
     },
 
-    /** The set of hashes already in the album, for skipping duplicate uploads. */
-    hashes: function (entries) {
-      var seen = new Set();
-      entries.forEach(function (entry) {
-        var item = album.parse(entry);
-        if (item) seen.add(item.id);
-      });
-      return seen;
+    /** An album title as it appears in ?album= — ASCII only, so it survives sharing. */
+    slugify: function (title) {
+      return (title || '').normalize('NFD').replace(/[̀-ͯ]/g, '')
+        .toLowerCase()
+        .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue').replace(/ß/g, 'ss')
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 40) || 'album';
     },
 
     /** Group a sorted item list into [{day, items}], keeping the sort order. */
@@ -202,6 +47,4 @@
       return groups;
     }
   };
-
-  PS.album = album;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

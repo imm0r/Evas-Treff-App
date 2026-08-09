@@ -6,7 +6,7 @@
  * So: build JPEG headers by hand, in both byte orders, and check what comes
  * back — including the cases where the answer has to be "no idea".
  *
- * Usage: node photoshare/tools/exif-test.mjs
+ * Usage: node tools/exif-test.mjs
  */
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';

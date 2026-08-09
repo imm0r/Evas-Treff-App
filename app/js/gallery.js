@@ -277,7 +277,7 @@
     var date = [today.getFullYear(),
       String(today.getMonth() + 1).padStart(2, '0'),
       String(today.getDate()).padStart(2, '0')].join('-');
-    PS.data.createAlbum(title.trim(), date, PS.albums.slugify(title.trim())).then(function (album) {
+    PS.data.createAlbum(title.trim(), date, PS.album.slugify(title.trim())).then(function (album) {
       location.href = albumHref(album, 'upload.html');
     }).catch(function (error) {
       PS.toast(PS.escapeError(error), 'error');

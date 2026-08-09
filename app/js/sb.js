@@ -87,6 +87,17 @@
     return session;
   };
 
+  /*
+   * Somebody taps the mail link while the app is already open — from the
+   * inbox, from the sign-in screen they left standing. The browser sees the
+   * same document with a different fragment and does NOT reload, so nothing
+   * would ever pick the tokens up. Absorb them here and reload deliberately.
+   */
+  global.addEventListener('hashchange', function () {
+    if (global.location.hash.indexOf('access_token=') < 0) return;
+    if (absorbHash()) global.location.reload();
+  });
+
   sb.signedIn = function () { return !!(session && session.refresh_token); };
   sb.user = function () { return session && session.user; };
   sb.signOut = function () { forget(); };
