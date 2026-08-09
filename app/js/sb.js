@@ -125,12 +125,24 @@
     return session.user;
   };
 
-  /** Ask for a magic link. `create_user` is false: only invited people exist. */
+  /**
+   * Ask for a magic link.
+   *
+   * Where the link comes back to is a QUERY parameter, not a body field. The
+   * client library takes it as `options.emailRedirectTo` and moves it to the
+   * query string itself; sent in the body it is silently ignored and every
+   * link lands on the project's Site URL instead of the page somebody started
+   * from. Caught by mailing a real link and reading where it pointed.
+   *
+   * `create_user` is true because there is no separate sign-up: a trigger
+   * refuses any address that is not on the guest list, so the first magic link
+   * is also the registration.
+   */
   sb.requestLink = async function (email, redirectTo) {
-    var response = await fetch(URL_BASE + '/auth/v1/otp', {
+    var response = await fetch(URL_BASE + '/auth/v1/otp?redirect_to=' + encodeURIComponent(redirectTo), {
       method: 'POST',
       headers: { apikey: KEY, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email, create_user: true, options: { email_redirect_to: redirectTo } })
+      body: JSON.stringify({ email: email, create_user: true })
     });
     if (!response.ok) {
       var detail = await response.json().catch(function () { return {}; });

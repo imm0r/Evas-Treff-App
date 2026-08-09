@@ -10,9 +10,10 @@ JavaScript und die Tests dazu. Der Schlüssel in `app/supabase.js` ist der
 öffentliche „publishable key"; ohne Anmeldung liefert er null Zeilen.
 
 ```
-app/                    die Seite, die GitHub Pages ausliefert
-supabase/migrations/    das Datenbankschema und die Zugriffsregeln
-tools/                  Testsuiten, Migration, lokaler Server
+app/                        die Seite, die GitHub Pages ausliefert
+supabase/migrations/        das Datenbankschema und die Zugriffsregeln
+supabase/email-templates/   die zwei Mails, auf Deutsch
+tools/                      Testsuiten, Migration, lokaler Server
 ```
 
 Bereiche: **Alben** (`index.html`), **Hochladen** (`upload.html`),
@@ -104,6 +105,26 @@ same host in the `connect-src` and `img-src` of every page's CSP.
 - **Redirect URLs**: add `https://imm0r.github.io/Evas-Treff-App/**` — the app
   asks to come back to the page you started on, so a link opened on a phone
   lands where you were rather than always on the front page.
+- **Templates**: paste the two from `supabase/email-templates/`. The stock ones
+  are English and say "finish signing up", which is both the wrong language and
+  the wrong idea — nobody signs up here, everybody is already invited.
+
+### 2b. Custom SMTP — not optional
+
+**Without it the family cannot log in at all.** Supabase's built-in mailer
+refuses to deliver to any address that is not a member of the project's own
+team, and it allows only a couple of messages an hour on top of that. The
+project owner gets their link and concludes it works; everybody else waits for
+a mail that was never sent, with no error anywhere they can see.
+
+Any provider with a free tier does the job for a family of eleven — Brevo,
+Resend, Mailgun, or a Gmail app password. Credentials go in
+**Authentication → Emails → SMTP Settings**. Raise the rate limit there too:
+the default with custom SMTP is 30 new users per hour, which is plenty here but
+worth knowing before a rollout.
+
+Verified the hard way: a link was mailed to the project owner and read back out
+of the inbox. That is also how the `redirect_to` bug below turned up.
 
 ### 3. The first admin
 

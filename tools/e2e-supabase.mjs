@@ -121,7 +121,10 @@ async function stub(page, back) {
     const auth = request.headers()['authorization'] || '';
 
     if (p === '/auth/v1/otp') {
-      back.otpRequests.push(JSON.parse(request.postData()));
+      // Where the link comes back to is a query parameter, not a body field -
+      // recorded from the URL, because that is the only place Supabase reads it.
+      back.otpRequests.push(Object.assign(JSON.parse(request.postData()),
+        { redirect_to: url.searchParams.get('redirect_to') }));
       return json(200, {});
     }
     // A signed URL is the whole point: it carries its own permission and is
@@ -242,9 +245,14 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   check('anmeldung: schickt genau eine Anfrage', back.otpRequests.length === 1);
   check('anmeldung: für die eingegebene Adresse',
     back.otpRequests[0].email === 'ich@example.de', JSON.stringify(back.otpRequests[0]));
+  // Im Body würde Supabase das Ziel stillschweigend ignorieren und jeden Link
+  // auf die Site URL schicken. Genau so war es gebaut, und genau das hat erst
+  // eine echte Mail ans echte Projekt gezeigt - deshalb prüft das hier die URL.
   check('anmeldung: mit Rücksprung auf dieselbe Seite',
-    (back.otpRequests[0].options.email_redirect_to || '').endsWith('/index.html'),
-    JSON.stringify(back.otpRequests[0].options));
+    (back.otpRequests[0].redirect_to || '').endsWith('/index.html'),
+    JSON.stringify(back.otpRequests[0]));
+  check('anmeldung: das Ziel steht in der Query, nicht im Body',
+    back.otpRequests[0].options === undefined, JSON.stringify(back.otpRequests[0]));
   check('anmeldung: keine Fehler', errors.length === 0, errors.join('\n'));
   await shot(page, '1-postfach');
   await context.close();
