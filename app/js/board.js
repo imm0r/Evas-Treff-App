@@ -83,7 +83,7 @@
     ]));
     app.appendChild(el('div', { class: 'panel' }, [nodes.compose]));
     app.appendChild(nodes.feed);
-    app.appendChild(PS.nav());
+    app.appendChild(PS.nav(state.me));
     showName();
   }
 

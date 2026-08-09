@@ -35,6 +35,19 @@ function check(name, ok, detail) {
   console.log(`${ok ? 'ok  ' : 'FAIL'}  ${name}${ok || !detail ? '' : `\n        ${detail}`}`);
 }
 
+/*
+ * SHOTS=<dir> also writes a picture of each screen.
+ *
+ * Assertions keep missing what a look would catch straight away: an avatar
+ * painted over the text under it, a crop that framed the wrong face. Cheap to
+ * leave in, and the only way some of those bugs were ever found.
+ */
+const SHOTS = process.env.SHOTS || '';
+async function shot(page, name) {
+  if (!SHOTS) return;
+  await page.screenshot({ path: path.join(SHOTS, name + '.png'), fullPage: true });
+}
+
 // --- a local stand-in for both the app host and Supabase -------------------
 
 const images = new Map();          // "signed" object path -> jpeg bytes
@@ -77,7 +90,7 @@ async function makeJpeg(page, w, h, hue, label) {
 function makeBackend() {
   return {
     otpRequests: [], inserts: [], deletes: [], uploads: [], signCalls: 0,
-    albums: [], photos: [], comments: [], people: [], board: [],
+    albums: [], photos: [], comments: [], people: [], board: [], invites: [],
     profile: { id: 'user-1', email: 'ich@example.de', is_admin: true, person_id: 'p1', people: { name: 'Maria' } }
   };
 }
@@ -150,8 +163,32 @@ async function stub(page, back) {
       back.board.unshift(saved);
       return json(201, [saved]);
     }
-    if (p === '/rest/v1/people') return json(200, back.people);
+    if (p === '/rest/v1/people') {
+      // The guest list looks a person up by name before it stores an invite.
+      const wanted = (url.searchParams.get('name') || '').replace('eq.', '');
+      if (wanted) {
+        const hit = back.people.find((x) => x.name === decodeURIComponent(wanted));
+        return json(200, hit ? [{ id: 'person-' + hit.name }] : []);
+      }
+      return json(200, back.people);
+    }
     if (p === '/rest/v1/profiles') return json(200, [back.profile]);
+
+    if (p === '/rest/v1/invites' && request.method() === 'GET') {
+      if (!back.profile.is_admin) return json(200, []);
+      return json(200, back.invites);
+    }
+    if (p === '/rest/v1/invites' && request.method() === 'POST') {
+      if (!back.profile.is_admin) return json(403, { message: 'not admin' });
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'invites', row });
+      back.invites.push({
+        email: row.email, is_admin: !!row.is_admin, person_id: row.person_id,
+        invited_at: new Date().toISOString(), used_at: null,
+        people: row.person_id ? { name: String(row.person_id).replace('person-', '') } : null
+      });
+      return json(201, [row]);
+    }
 
     if (p === '/rest/v1/comments' && request.method() === 'POST') {
       const row = JSON.parse(request.postData());
@@ -194,6 +231,7 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     (back.otpRequests[0].options.email_redirect_to || '').endsWith('/index.html'),
     JSON.stringify(back.otpRequests[0].options));
   check('anmeldung: keine Fehler', errors.length === 0, errors.join('\n'));
+  await shot(page, '1-postfach');
   await context.close();
 }
 
@@ -300,6 +338,7 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await page.waitForSelector('.lightbox:not(.is-hidden)');
   check('löschen: nicht beim Foto eines anderen', !(await page.isVisible('.btn--danger')));
 
+  await shot(page, '2-album');
   check('keine Fehler', errors.length === 0, errors.join('\n'));
   await context.close();
 }
@@ -333,11 +372,11 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
 
   const scratch = await context.newPage();
   await scratch.goto('about:blank');
-  const shot = await makeJpeg(scratch, 1200, 900, 120, 'Kuchen');
+  const kuchen = await makeJpeg(scratch, 1200, 900, 120, 'Kuchen');
   await scratch.close();
 
   await page.setInputFiles('input[type=file]:not([capture])',
-    { name: 'IMG_0042.jpg', mimeType: 'image/jpeg', buffer: shot });
+    { name: 'IMG_0042.jpg', mimeType: 'image/jpeg', buffer: kuchen });
   await page.waitForSelector('.job--done');
 
   const row = back.inserts.find((i) => i.table === 'photos').row;
@@ -359,12 +398,13 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
 
   // Dasselbe Foto nochmal: derselbe Inhalt, derselbe Hash, keine zweite Kopie.
   await page.setInputFiles('input[type=file]:not([capture])',
-    { name: 'IMG_0042-kopie.jpg', mimeType: 'image/jpeg', buffer: shot });
+    { name: 'IMG_0042-kopie.jpg', mimeType: 'image/jpeg', buffer: kuchen });
   await page.waitForSelector('.job--skip');
   check('hochladen: dasselbe Foto ein zweites Mal kostet nichts',
     back.uploads.length === 2 && back.inserts.filter((i) => i.table === 'photos').length === 1,
     JSON.stringify(back.uploads));
 
+  await shot(page, '3-hochladen');
   check('hochladen: keine Fehler', errors.length === 0, errors.join('\n'));
   await context.close();
 }
@@ -429,11 +469,86 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   check('pinnwand: löschen entfernt die Zeile',
     back.deletes.some((d) => d.startsWith('/rest/v1/board_posts')), JSON.stringify(back.deletes));
 
+  await shot(page, '4-pinnwand');
   check('pinnwand: keine Fehler', errors.length === 0, errors.join('\n'));
   await context.close();
 }
 
-// --- 5. nothing is reachable without a session -----------------------------
+// --- 5. die Gästeliste -----------------------------------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  images.set('photo.jpg', await makeJpeg(scratch, 800, 500, 40, 'Familie'));
+  await scratch.close();
+
+  back.people = [
+    { name: 'Maria', face_x: 0.78, face_y: 0.39, aliases: [] },
+    { name: 'Ines', face_x: 0.13, face_y: 0.39, aliases: [] }
+  ];
+  back.invites = [
+    { email: 'ich@example.de', is_admin: true, person_id: 'p1',
+      invited_at: '2026-08-01T10:00:00Z', used_at: '2026-08-02T10:00:00Z', people: { name: 'Maria' } },
+    { email: 'ines@example.de', is_admin: false, person_id: 'p2',
+      invited_at: '2026-08-01T10:00:00Z', used_at: null, people: { name: 'Ines' } }
+  ];
+
+  await page.goto(origin + '/admin.html' + SESSION);
+  await page.waitForSelector('.guest');
+  check('gästeliste: zeigt alle Eingeladenen', (await page.locator('.guest').count()) === 2);
+  check('gästeliste: sagt, wer schon da war',
+    (await page.locator('.guest__state.is-here').count()) === 1);
+  // Kicking yourself out of your own guest list is the one move that cannot be
+  // undone from inside the app, so it is not offered.
+  check('gästeliste: die eigene Einladung lässt sich nicht zurückziehen',
+    (await page.locator('.comment__remove').count()) === 1);
+  check('gästeliste: Gesichter aus dem Familienfoto',
+    (await page.locator('.guest .avatar').count()) === 2);
+
+  await page.fill('.compose input[type=email]', 'lu@example.de');
+  await page.selectOption('.compose select', 'Ines');
+  await page.click('.compose__actions .btn--primary');
+  await page.waitForFunction(() => document.querySelectorAll('.guest').length === 3);
+  const written = back.inserts.find((i) => i.table === 'invites').row;
+  check('gästeliste: trägt die Adresse mit dem gewählten Gesicht ein',
+    written.email === 'lu@example.de' && written.person_id === 'person-Ines' && written.is_admin === false,
+    JSON.stringify(written));
+
+  await shot(page, '5-gaesteliste');
+  check('gästeliste: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 6. ein normales Konto sieht die Gästeliste nicht ----------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const back = makeBackend();
+  back.profile.is_admin = false;
+  await stub(page, back);
+
+  await page.goto(origin + '/index.html' + SESSION);
+  await page.waitForSelector('.nav');
+  check('nur für Admins: kein Eintrag in der Leiste',
+    (await page.locator('.nav__item[href="admin.html"]').count()) === 0);
+
+  await page.goto(origin + '/admin.html' + SESSION);
+  await page.waitForSelector('.status__emoji');
+  check('nur für Admins: die Seite selbst weist ab',
+    (await page.textContent('.status p')).includes('nur verwalten'));
+  check('nur für Admins: und bietet kein Formular an',
+    await page.locator('.compose').isHidden());
+  await context.close();
+}
+
+// --- 7. nothing is reachable without a session -----------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
   const page = await context.newPage();
@@ -444,7 +559,7 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     if (!auth.includes('Bearer ')) reached.push(new URL(route.request().url()).pathname);
     return route.fulfill({ status: 401, headers: { 'Content-Type': 'application/json' }, body: '{}' });
   });
-  for (const where of ['/index.html', '/upload.html', '/board.html']) {
+  for (const where of ['/index.html', '/upload.html', '/board.html', '/admin.html']) {
     await page.goto(origin + where);
     await page.waitForSelector('.gate');
     await page.waitForTimeout(300);

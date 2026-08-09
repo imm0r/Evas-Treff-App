@@ -90,7 +90,7 @@
     app.appendChild(nodes.newPill);
     app.appendChild(nodes.feed);
     buildLightbox(app);
-    app.appendChild(PS.nav());
+    app.appendChild(PS.nav(state.me));
   }
 
   /**

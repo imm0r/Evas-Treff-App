@@ -422,6 +422,38 @@ img { display: block; max-width: 100%; }
   background: var(--surface-2);
 }
 
+/* --- the guest list ------------------------------------------------------- */
+
+.guests { max-width: 620px; margin: 0 auto; padding: 0 var(--pad); }
+
+.guest {
+  position: relative;
+  display: flex; align-items: center; gap: 10px;
+  margin-top: 10px;
+  padding: 10px 34px 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.guest--face { padding-left: 12px; }
+
+.guest__body { flex: 1; min-width: 0; }
+.guest__name { display: block; font-size: 15px; }
+/* The address is the identity here, so it must never be cut in half. */
+.guest__mail { display: block; font-size: 12px; color: var(--ink-dim); word-break: break-all; }
+.guest__mail:empty { display: none; }
+
+.guest__state { font-size: 12px; color: var(--ink-dim); white-space: nowrap; }
+.guest__state.is-here { color: var(--ok); }
+
+.guest__admin {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: var(--surface-2); color: var(--ink-dim);
+}
+
+.checkrow { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; }
+.checkrow .check { width: 18px; height: 18px; accent-color: var(--accent); }
+
 /* --- the shelf of albums -------------------------------------------------- */
 
 .topbar__brand { display: flex; align-items: center; gap: 6px; }

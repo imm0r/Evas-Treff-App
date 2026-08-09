@@ -15,10 +15,14 @@
     { page: 'board.html', label: 'Pinnwand', icon: '📌' }
   ];
 
-  PS.nav = function () {
+  // Only an admin can do anything on the guest list, and the rules say so
+  // server-side — hiding it is about not offering a dead end, not security.
+  var ADMIN = { page: 'admin.html', label: 'Familie', icon: '👪' };
+
+  PS.nav = function (me) {
     var here = location.pathname.split('/').pop() || 'index.html';
     var bar = PS.el('nav', { class: 'nav' });
-    SECTIONS.forEach(function (section) {
+    SECTIONS.concat(me && me.isAdmin ? [ADMIN] : []).forEach(function (section) {
       var current = section.page === here;
       bar.appendChild(PS.el('a', {
         class: 'nav__item' + (current ? ' is-current' : ''),

@@ -63,9 +63,7 @@
 
       state.known = await PS.data.knownHashes(state.album.id);
       state.people = await PS.people.load();
-      nodes.status.textContent = state.known.size
-        ? 'Im Album sind schon ' + PS.plural(state.known.size, 'Foto', 'Fotos') + '.'
-        : 'Noch keine Fotos im Album — mach den Anfang.';
+      showCount();
     } catch (error) {
       nodes.status.textContent = PS.escapeError(error);
       nodes.status.classList.add('is-error');
@@ -82,6 +80,13 @@
     // tapping the group photo, and remember the answer on the profile so no
     // other device ever asks again.
     if (!PS.name() && state.people) askWho();
+  }
+
+  /** Kept in step with every upload, so it never contradicts the summary below it. */
+  function showCount() {
+    nodes.status.textContent = state.known.size
+      ? 'Im Album sind ' + PS.plural(state.known.size, 'Foto', 'Fotos') + '.'
+      : 'Noch keine Fotos im Album — mach den Anfang.';
   }
 
   function applyPeople() {
@@ -345,6 +350,7 @@
       });
 
       state.known.add(hash);
+      showCount();
       state.uploaded++;
       state.savedBytes += Math.max(0, job.file.size - photo.size - thumb.size);
       job.state = 'fertig';
