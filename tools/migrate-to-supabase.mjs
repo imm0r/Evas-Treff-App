@@ -161,14 +161,34 @@ const albums = slugs.length
   : [await readAlbum(REPO, '')];
 const board = await readBoard();
 
+const groupPhoto = path.join(REPO, 'people', 'photo.jpg');
+const hasGroupPhoto = await exists(groupPhoto);
+
 const photoCount = albums.reduce((n, a) => n + a.photos.length, 0);
 const commentCount = albums.reduce((n, a) => n + a.photos.reduce((m, p) => m + p.comments.length, 0), 0);
 console.log(`Gefunden: ${albums.length} Alben, ${photoCount} Fotos, ${commentCount} Kommentare, ${board.length} Pinnwand-Beiträge`);
 albums.forEach((a) => console.log(`  ${a.slug.padEnd(16)} ${String(a.photos.length).padStart(4)} Fotos  „${a.title}"`));
+console.log(`  Familienfoto: ${hasGroupPhoto ? 'gefunden' : 'FEHLT — ohne es gibt es keine Gesichter'}`);
 
 if (DRY) {
   console.log('\n--dry-run: nichts geschrieben.');
   process.exit(0);
+}
+
+/*
+ * The group photo, before anything else.
+ *
+ * The `people` rows are only names and coordinates; the picture they point at
+ * lives in Storage. Without it PS.data.people() returns null and every face in
+ * the app quietly disappears - the picker, the avatars beside the names, all
+ * of it. Nothing breaks loudly, which is exactly why this is easy to forget:
+ * it was, once, and only signing the path by hand turned it up.
+ */
+if (hasGroupPhoto) {
+  await upload('people', 'photo.jpg', groupPhoto);
+  console.log('\nFamilienfoto hochgeladen.');
+} else {
+  console.log('\nKein people/photo.jpg im Album-Repo - die Gesichter bleiben aus.');
 }
 
 for (const album of albums) {
