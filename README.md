@@ -119,9 +119,18 @@ a mail that was never sent, with no error anywhere they can see.
 
 Any provider with a free tier does the job for a family of eleven — Brevo,
 Resend, Mailgun, or a Gmail app password. Credentials go in
-**Authentication → Emails → SMTP Settings**. Raise the rate limit there too:
-the default with custom SMTP is 30 new users per hour, which is plenty here but
-worth knowing before a rollout.
+**Authentication → Emails → SMTP Settings**: host `smtp.gmail.com`, port 465,
+the mailbox address as the user, and an **app password** rather than the account
+password. Set the sender name to `Evas Treff`. Raise the rate limit on the same
+page too: the default with custom SMTP is 30 new users per hour, which is plenty
+here but worth knowing before a rollout.
+
+The same mailbox can serve several projects — a Gmail app password is not tied
+to one. Give each project **its own** app password though: Google lets you mint
+as many as you like and revoke them one at a time, so rotating one project's
+sender cannot silently stop the family from logging in. The ~500 messages a day
+are shared across everything using that mailbox, which at eleven relatives is
+not a number anybody will meet.
 
 Verified the hard way: a link was mailed to the project owner and read back out
 of the inbox. That is also how the `redirect_to` bug below turned up.
