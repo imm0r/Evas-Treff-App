@@ -103,6 +103,28 @@ contributed. That rule is a policy in the database, proven against it in a
 rolled-back transaction: own recipe yes, someone else's no, a stranger's photo
 on my recipe yes, the same photo on their recipe no.
 
+**The database never speaks to the family directly.** Typing 4113 into "für
+wie viele Personen?" used to put `new row for relation "recipes" violates check
+constraint "recipes_servings_check"` on somebody's phone. For the person
+holding it that is not a sentence, it is a fright. Three things changed:
+
+* The form checks the range itself. `min`/`max` on a number input stops
+  neither typing nor reading the value back, so the check has to be in the
+  code, and it names the allowed span rather than the rule.
+* Whatever still comes back from Postgres is translated. The constraint name
+  carries the column, so `recipes_servings_check` becomes *„Bei ‚für wie viele
+  Personen' passt der Wert nicht."*; a column nobody has named yet falls back
+  to a general sentence — vaguer, but never raw and never wrong.
+* Errors now carry `status` and the SQLSTATE `code`. Callers branch on the
+  code, never on the German text, so the wording stays free to change without
+  quietly breaking a code path.
+
+**Two things may share a name.** "Weihnachten" happens every year and every
+family cooks Kartoffelsalat twice, but the slug is unique because it is in the
+URL. The second one used to get *„Das gibt es schon."* and a dead end; now it
+becomes `-2`. On the server's refusal rather than a lookup first: two people
+creating at the same moment would both pass a lookup and one would still fail.
+
 **One album is not a dead end.** With exactly one album the app opens it
 straight away — that is what the links already in the family's group chat do,
 and a shelf holding one card is a pointless stop. But "Neues Album" lives on

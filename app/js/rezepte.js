@@ -23,6 +23,11 @@
   var THUMB_EDGE = 480;
   var IMAGE_QUALITY = 0.82;
 
+  // Dieselbe Obergrenze wie die Prüfregel an der Tabelle. Steht sie an zwei
+  // Orten, dürfen sie nicht auseinanderlaufen — deshalb hier eine Konstante
+  // mit Namen und nicht eine 99 mitten im Text.
+  var MAX_SERVINGS = 99;
+
   var state = { me: null, list: null, recipe: null, people: null, busy: false };
   var nodes = {};
 
@@ -301,7 +306,8 @@
   function buildForm() {
     nodes.fTitle = el('input', { class: 'field', type: 'text', maxlength: '120', placeholder: 'Wie heißt es?' });
     nodes.fServings = el('input', {
-      class: 'field field--slim', type: 'number', min: '1', max: '99', placeholder: 'für wie viele?'
+      class: 'field field--slim', type: 'number', min: '1', max: String(MAX_SERVINGS),
+      inputmode: 'numeric', placeholder: 'für wie viele?'
     });
     nodes.fIngredients = el('textarea', {
       class: 'field', rows: '7', maxlength: '4000',
@@ -373,10 +379,27 @@
       return;
     }
 
+    /*
+     * Die Portionen hier prüfen, nicht erst in der Datenbank.
+     *
+     * `min`/`max` am Feld hält der Browser beim Tippen nicht auf, und der Wert
+     * wird auch nicht abgeschnitten — wer 4113 eintippt, kam bis hierher
+     * durch. Die Datenbank sagte dann nein, und was auf dem Telefon stand, war
+     * `recipes_servings_check`. Der Satz unten ist derselbe Riegel, nur
+     * rechtzeitig und auf Deutsch.
+     */
+    var servings = nodes.fServings.value.trim() ? Number(nodes.fServings.value) : null;
+    if (servings !== null &&
+        (!Number.isInteger(servings) || servings < 1 || servings > MAX_SERVINGS)) {
+      nodes.fServings.focus();
+      PS.toast('Für wie viele Personen? Bitte eine ganze Zahl von 1 bis ' + MAX_SERVINGS + '.');
+      return;
+    }
+
     var editing = nodes.form._editing;
     var fields = {
       title: title,
-      servings: Number(nodes.fServings.value) || null,
+      servings: servings,
       ingredients: nodes.fIngredients.value.trim(),
       steps: nodes.fSteps.value.trim(),
       note: nodes.fNote.value.trim() || null

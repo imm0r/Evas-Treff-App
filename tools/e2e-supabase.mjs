@@ -292,6 +292,22 @@ async function stub(page, back) {
     if (p === '/rest/v1/recipes' && request.method() === 'POST') {
       const row = JSON.parse(request.postData());
       back.inserts.push({ table: 'recipes', row });
+      /*
+       * Eine Prüfregel, die von vorn NICHT mehr erreichbar ist, weil das
+       * Formular vorher abfängt. Sie muss hier trotzdem geprüft werden: das
+       * Auffangnetz ist genau für den Tag da, an dem eine Regel dazukommt, an
+       * die das Formular noch nicht denkt — und dann darf da nicht wieder
+       * `recipes_servings_check` auf dem Telefon stehen.
+       */
+      if (row.title === 'Prüfregel') {
+        return json(400, { code: '23514', message:
+          'new row for relation "recipes" violates check constraint "recipes_servings_check"' });
+      }
+      // Wie Postgres: der Slug ist eindeutig, und die zweite Zeile fliegt raus.
+      if (back.recipes.some((r) => r.slug === row.slug)) {
+        return json(409, { code: '23505', message:
+          'duplicate key value violates unique constraint "recipes_slug_key"' });
+      }
       const saved = Object.assign({ id: 'rz-' + (back.recipes.length + 1), profiles: null }, row);
       back.recipes.push(saved);
       return json(201, [saved]);
@@ -1092,9 +1108,23 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   const page = await context.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => {
+    // Die Zeilen zu den beiden absichtlich provozierten Absagen (Namenskonflikt
+    // und Prüfregel) werden unten einzeln gezählt — hier wären sie nur
+    // Rauschen. Jede ANDERE Absage bleibt ein Fehler.
+    if (m.type() === 'error' && !/status of (400|409)/.test(m.text())) errors.push(m.text());
+  });
   const back = makeBackend();
   await stub(page, back);
+
+  /*
+   * Der abgewiesene Slug wird vom Browser als Fehler protokolliert, obwohl die
+   * App ihn abfängt. Ihn wegzufiltern wäre schade — gezählt beweist er, dass
+   * die Wiederholung auf eine ECHTE Absage reagiert und nicht auf eine
+   * vorsorglich umbenannte Adresse, die nie irgendwo angeeckt ist.
+   */
+  const abgelehnt = [];
+  page.on('response', (r) => { if (r.status() >= 400) abgelehnt.push(r.status()); });
 
   const scratch = await context.newPage();
   await scratch.goto('about:blank');
@@ -1200,6 +1230,83 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     (await page.locator('.toast').last().textContent()).includes('kein Rezept'),
     await page.locator('.toast').last().textContent());
 
+  /*
+   * Die Datenbank darf nie wörtlich auf dem Telefon landen.
+   *
+   * Beides ist echt passiert: „für wie viele" mit 4113 beantwortet, und was
+   * zurückkam, war `recipes_servings_check`.
+   */
+  await page.goto(origin + '/rezepte.html');
+  await page.waitForSelector('.shelf__card');
+  const vorPortionen = back.inserts.filter((i) => i.table === 'recipes').length;
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Butterbrot');
+  await page.fill('.confirm input[type=number]', '4113');
+  await page.locator('.confirm textarea').nth(0).fill('3 Scheiben Graubrot');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForSelector('.toast');
+  const portionsHinweis = await page.locator('.toast').last().textContent();
+  check('rezepte: 4113 Portionen wird gar nicht erst losgeschickt',
+    back.inserts.filter((i) => i.table === 'recipes').length === vorPortionen,
+    'es ging trotzdem raus');
+  check('rezepte: und der Hinweis nennt die erlaubte Spanne, nicht die Prüfregel',
+    portionsHinweis.includes('1 bis 99') && !portionsHinweis.includes('_check'),
+    portionsHinweis);
+
+  // Eine halbe Portion ist genauso wenig eine Portionszahl. Mit PUNKT, weil
+  // ein Zahlenfeld das deutsche Komma schon selbst nicht annimmt — daraus wird
+  // ein leeres Feld, und leer heißt zulässigerweise "steht nicht dabei".
+  await page.fill('.confirm input[type=number]', '2.5');
+  await page.click('.confirm__actions .btn--primary');
+  check('rezepte: auch eine krumme Zahl kommt nicht durch',
+    back.inserts.filter((i) => i.table === 'recipes').length === vorPortionen);
+
+  // Und leer bleibt erlaubt — auf den meisten Karteikarten steht es nicht.
+  await page.fill('.confirm input[type=number]', '');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForFunction(() => location.search.includes('rezept=butterbrot'));
+  check('rezepte: ohne Angabe geht es weiterhin durch',
+    back.inserts.filter((i) => i.table === 'recipes').pop().row.servings === null);
+
+  /*
+   * Zwei Rezepte dürfen gleich heißen. „Weihnachten" gibt es jedes Jahr, und
+   * Kartoffelsalat kocht jede Familie zweimal.
+   */
+  await page.goto(origin + '/rezepte.html');
+  await page.waitForSelector('.shelf__card');
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Butterbrot');
+  await page.locator('.confirm textarea').nth(0).fill('Brot');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForFunction(() => location.search.includes('rezept=butterbrot-2'));
+  check('rezepte: der gleiche Name nochmal wird -2, nicht "Das gibt es schon"',
+    page.url().includes('rezept=butterbrot-2') &&
+    (await page.locator('.toast--error').count()) === 0,
+    page.url());
+  const beideVersuche = back.inserts.filter((i) => i.table === 'recipes' && i.row.title === 'Butterbrot');
+  check('rezepte: der Titel bleibt dabei unangetastet',
+    beideVersuche.every((i) => i.row.title === 'Butterbrot'));
+  check('rezepte: und die Umbenennung folgt auf eine echte Absage, nicht auf Verdacht',
+    abgelehnt.filter((s) => s === 409).length === 1, JSON.stringify(abgelehnt));
+
+  await page.goto(origin + '/rezepte.html');
+  await page.waitForSelector('.shelf__card');
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Prüfregel');
+  await page.locator('.confirm textarea').nth(0).fill('Irgendwas');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForSelector('.toast--error');
+  const roh = await page.locator('.toast--error').last().textContent();
+  check('rezepte: eine verletzte Prüfregel kommt auf Deutsch an, nicht als Postgres',
+    !/violates|check constraint|_check|relation/.test(roh), roh);
+  check('rezepte: und der Satz sagt, um welches Feld es geht',
+    roh.includes('für wie viele Personen'), roh);
+  await shot(page, '7-rezept-fehler');
+
+  // Genau die beiden provozierten Absagen, keine dritte.
+  check('rezepte: sonst hat der Server nichts abgelehnt',
+    abgelehnt.length === 2 && abgelehnt.includes(409) && abgelehnt.includes(400),
+    JSON.stringify(abgelehnt));
   check('rezepte: keine Fehler', errors.length === 0, errors.join('\n'));
   await context.close();
 }
