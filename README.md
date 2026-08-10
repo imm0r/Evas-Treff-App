@@ -195,7 +195,7 @@ npm install && npx playwright install chromium
 npm test
 ```
 
-Two suites, both of which check the code against something other than itself:
+Three checks, all of which measure the code against something other than itself:
 
 - `tools/exif-test.mjs` — hand-assembled JPEG headers in both byte orders,
   including the ones that must return "no idea": dead camera clocks, dates in
@@ -209,6 +209,17 @@ Two suites, both of which check the code against something other than itself:
   list refusing a non-admin, the calendar asking only for dates from today
   onwards and sorting birthdays in among the events, an empty time arriving as
   `null` rather than `00:00`, and a signed-out page requesting nothing at all.
+- `tools/query-check.mjs` (`npm run check:api`) — every query the app makes,
+  put to the real Supabase without a session. A stub can only confirm what it
+  was taught: it hands back canned JSON and never reads the `select`, so it
+  cannot know whether PostgREST could answer it. This runs `app/js/data.js`
+  itself, with a `PS` that records queries instead of sending them, and then
+  asks the live project. Row level security answers `[]` to all of them, but
+  the shape of a query is checked *before* that — a broken one comes back 300
+  or 400. It exists because one did: the calendar asked for `profiles` on
+  `events`, which PostgREST refuses, because `events.created_by` and the
+  `event_replies` junction are two different paths between the same two
+  tables. The tests were green and the page was blank.
 
 `SHOTS=<dir> node tools/e2e-supabase.mjs` also writes a picture of every screen.
 Assertions keep missing what one look catches immediately, and screenshots have

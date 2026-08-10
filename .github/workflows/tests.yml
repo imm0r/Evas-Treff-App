@@ -17,3 +17,8 @@ jobs:
       - run: npm install --no-audit --no-fund
       - run: npx playwright install --with-deps chromium
       - run: npm test
+      # Der Stub kann nicht wissen, ob PostgREST eine Abfrage überhaupt
+      # beantworten könnte — er liefert ja nur, was man ihm beigebracht hat.
+      # Also einmal das echte Gegenüber fragen. Ohne Anmeldung, also ohne
+      # Familiendaten: kaputte Abfragen scheitern trotzdem sichtbar.
+      - run: npm run check:api
