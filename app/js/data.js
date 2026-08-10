@@ -22,6 +22,17 @@
 
   var SIGN_SECONDS = 3600;
 
+  /*
+   * Ab wann ein Kommentar als neu gilt, wenn zu einem Foto noch nie jemand
+   * hingesehen hat.
+   *
+   * Steht im eigenen Profil und wird von `me()` hier abgelegt, damit die
+   * Fotoabfrage ihn nicht jedes Mal durchgereicht bekommen muss. Ohne Profil
+   * — etwa im Abfrage-Prüfer — ist alles alt, nicht alles neu: ein Hinweis,
+   * der beim ersten Aufruf über allem klebt, wäre schon kaputt.
+   */
+  var seenFloor = '1970-01-01T00:00:00Z';
+
   function two(n) { return String(n).padStart(2, '0'); }
 
   /** Split a timestamp the way the file names used to, so the UI is unchanged. */
@@ -38,7 +49,7 @@
 
   data.albums = async function () {
     var rows = await PS.sb.select('albums',
-      'select=id,slug,title,event_date,photos(count)&order=event_date.desc,title.asc');
+      'select=id,slug,title,event_date,created_by,photos(count)&order=event_date.desc,title.asc');
 
     // One cover per album: its newest photo. A second small query rather than a
     // lateral join keeps the first one readable, and both are indexed.
@@ -52,17 +63,60 @@
     var paths = Object.keys(coverFor).map(function (id) { return coverFor[id]; });
     var signed = await PS.sb.signPaths('photos', paths, SIGN_SECONDS);
 
+    var fresh = await unreadByAlbum();
+
     return rows.map(function (row) {
       return {
         id: row.id,
         slug: row.slug,
         title: row.title,
         date: row.event_date || '',
+        ownerId: row.created_by,
         count: (row.photos && row.photos[0] && row.photos[0].count) || 0,
-        coverUrl: signed[coverFor[row.id]] || null
+        coverUrl: signed[coverFor[row.id]] || null,
+        unread: fresh[row.id] || 0
       };
     });
   };
+
+  /**
+   * Wie viele Fotos je Album etwas Ungelesenes tragen.
+   *
+   * Der Boden macht das billig: gefragt wird nur nach Kommentaren, die jünger
+   * sind als er, und das sind ein paar — nicht die ganze Geschichte. Ohne ihn
+   * müsste diese Abfrage jedes Mal alles holen, um dann fast alles wegzuwerfen.
+   */
+  async function unreadByAlbum() {
+    var mine = PS.sb.user() && PS.sb.user().id;
+    var comments = await PS.sb.select('comments',
+      'select=photo_id,created_at,author_id,photos(album_id)' +
+      '&created_at=gt.' + encodeURIComponent(seenFloor));
+    if (!comments.length) return {};
+
+    var reads = await readsByPhoto();
+    var perAlbum = {};
+    var counted = {};
+    comments.forEach(function (row) {
+      // Was man selbst geschrieben hat, ist für einen selbst nichts Neues.
+      if (row.author_id === mine) return;
+      if (row.created_at <= (reads[row.photo_id] || seenFloor)) return;
+      var album = row.photos && row.photos.album_id;
+      if (!album || counted[row.photo_id]) return;
+      // Gezählt werden Fotos, nicht Kommentare: "3 Bilder mit Neuem" führt
+      // irgendwohin, "17 neue Kommentare" ist nur eine Zahl.
+      counted[row.photo_id] = true;
+      perAlbum[album] = (perAlbum[album] || 0) + 1;
+    });
+    return perAlbum;
+  }
+
+  /** Wann ich welches Foto zuletzt aufgemacht habe. Fremde Zeilen sperrt RLS. */
+  async function readsByPhoto() {
+    var rows = await PS.sb.select('comment_reads', 'select=photo_id,seen_at');
+    var seen = {};
+    rows.forEach(function (row) { seen[row.photo_id] = row.seen_at; });
+    return seen;
+  }
 
   data.createAlbum = async function (title, date, slug) {
     var rows = await PS.sb.insert('albums', {
@@ -83,17 +137,27 @@
   data.photos = async function (albumId) {
     var rows = await PS.sb.select('photos',
       'select=id,storage_path,thumb_path,content_hash,taken_at,uploader_id,uploader_name,' +
-      'comments(id,body,author_id,author_name,created_at)' +
+      'comments(id,body,author_id,author_name,created_at),comment_reads(seen_at)' +
       '&album_id=eq.' + albumId + '&order=taken_at.desc');
 
     var paths = [];
     rows.forEach(function (row) { paths.push(row.thumb_path, row.storage_path); });
     var signed = await PS.sb.signPaths('photos', paths, SIGN_SECONDS);
 
+    var mine = PS.sb.user() && PS.sb.user().id;
+
     return rows.map(function (row) {
       var when = dayAndTime(row.taken_at);
+      // RLS lässt von `comment_reads` nur die eigene Zeile durch, also ist die
+      // erste — wenn es sie gibt — immer meine.
+      var seen = (row.comment_reads && row.comment_reads[0] &&
+        row.comment_reads[0].seen_at) || seenFloor;
+      var unread = (row.comments || []).filter(function (c) {
+        return c.author_id !== mine && c.created_at > seen;
+      }).length;
       return {
         id: row.id,
+        unread: unread,
         hash: row.content_hash,
         day: when.day,
         time: when.time,
@@ -148,6 +212,29 @@
     // invisible while a leftover row is a tile that opens into nothing.
     await PS.sb.remove('photos', 'id=eq.' + photo.id);
     await PS.sb.removeFiles('photos', [photo.storagePath, photo.thumbPath]);
+  };
+
+  /** Ein Foto in ein anderes Album hängen. Die Datei bleibt, wo sie liegt. */
+  data.movePhoto = async function (photo, albumId) {
+    await PS.sb.patch('photos', 'id=eq.' + photo.id, { album_id: albumId });
+  };
+
+  data.renameAlbum = async function (album, title) {
+    await PS.sb.patch('albums', 'id=eq.' + album.id, { title: title });
+  };
+
+  /**
+   * „Ich habe die Kommentare dieses Fotos gesehen."
+   *
+   * Ein Upsert, weil man dasselbe Foto immer wieder aufmacht — und weil der
+   * Primärschlüssel (Konto, Foto) daraus ohnehin eine einzige Zeile macht.
+   */
+  data.markRead = async function (photoId) {
+    await PS.sb.insert('comment_reads', {
+      profile_id: PS.sb.user() && PS.sb.user().id,
+      photo_id: photoId,
+      seen_at: new Date().toISOString()
+    }, { upsert: true, query: 'on_conflict=profile_id,photo_id' });
   };
 
   // --- comments -------------------------------------------------------------
@@ -388,9 +475,10 @@
     // Everyone may read every profile, so this must name the row explicitly -
     // "the first one" would happily be somebody else.
     var rows = await PS.sb.select('profiles',
-      'select=id,email,is_admin,person_id,people(name)&id=eq.' + user.id);
+      'select=id,email,is_admin,person_id,comments_seen_at,people(name)&id=eq.' + user.id);
     if (!rows.length) return null;
     var row = rows[0];
+    if (row.comments_seen_at) seenFloor = row.comments_seen_at;
     return {
       id: row.id, email: row.email, isAdmin: row.is_admin,
       name: (row.people && row.people.name) || null

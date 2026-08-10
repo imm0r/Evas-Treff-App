@@ -66,7 +66,12 @@
     });
 
     nodes.topTitle = el('h1', { class: 'topbar__title', text: TITLE });
-    nodes.back = el('a', { class: 'btn btn--ghost topbar__back is-hidden', href: 'index.html', title: 'Alle Alben' }, ['‹']);
+    nodes.back = el('a', {
+      class: 'btn btn--ghost topbar__back is-hidden',
+      // Nicht `index.html`: das springt bei einem einzigen Album sofort wieder
+      // hier herein, und der Pfeil täte scheinbar nichts.
+      href: 'index.html?alben', title: 'Alle Alben'
+    }, ['‹']);
     nodes.addPhotos = el('a', { class: 'btn btn--primary act-add-photos is-hidden', href: 'upload.html' }, [
       // Two labels: on a narrow phone the full wording pushes the album
       // title into an ellipsis, and the title is what tells you where you are.
@@ -97,8 +102,18 @@
    * ?album=<slug> names one. Without it: a repository holding exactly one
    * album opens it straight away — which is also what the links already in the
    * family's group chat do — and anything else shows the shelf.
+   *
+   * `?alben` erzwingt das Regal. Ohne das war die Abkürzung eine Sackgasse:
+   * bei genau einem Album sprang die Seite immer hinein, das Regal erschien
+   * nie — und weil „Neues Album" nur dort steht, konnte man ein zweites Album
+   * gar nicht anlegen. Genau der Zustand, in dem die Familie saß.
    */
+  function wantsShelf() {
+    return new URLSearchParams(location.search).has('alben');
+  }
+
   function chooseAlbum(shelf) {
+    if (wantsShelf()) return null;
     var wanted = new URLSearchParams(location.search).get('album');
     if (wanted !== null) {
       var hit = null;
@@ -193,8 +208,9 @@
     nodes.addPhotos.href = albumHref(state.album, 'upload.html');
     nodes.addPhotos.classList.remove('is-hidden');
     nodes.newAlbum.classList.add('is-hidden');
-    // Only offer the way back when there is more than one album to go back to.
-    nodes.back.classList.toggle('is-hidden', state.shelf.length < 2);
+    // Immer anbieten, auch beim einzigen Album: das Regal ist der Ort, an dem
+    // ein zweites entsteht.
+    nodes.back.classList.remove('is-hidden');
 
     renderFilters();
     state.visible = state.filter
@@ -250,24 +266,54 @@
     var shelf = el('div', { class: 'shelf' });
     state.shelf.forEach(function (album) {
       var cover = el('div', { class: 'shelf__cover' });
-      var card = el('a', { class: 'shelf__card', href: albumHref(album) }, [
-        cover,
-        el('div', { class: 'shelf__meta' }, [
-          el('strong', { class: 'shelf__title', text: album.title }),
-          el('span', {
-            class: 'shelf__count',
-            text: (album.date ? PS.formatDayShort(album.date) + ' · ' : '') +
-              PS.plural(album.count, 'Foto', 'Fotos')
-          })
-        ])
+      var meta = el('div', { class: 'shelf__meta' }, [
+        el('strong', { class: 'shelf__title', text: album.title }),
+        el('span', {
+          class: 'shelf__count',
+          text: (album.date ? PS.formatDayShort(album.date) + ' · ' : '') +
+            PS.plural(album.count, 'Foto', 'Fotos')
+        })
       ]);
-      shelf.appendChild(card);
+      // Wo etwas Neues steht, nicht bloß dass etwas neu ist: die Zahl zählt
+      // Bilder, weil man zu einem Bild gehen kann, zu einer Kommentarzahl nicht.
+      if (album.unread) {
+        meta.appendChild(el('span', { class: 'shelf__new', text:
+          album.unread === 1 ? '1 Bild mit neuen Kommentaren'
+            : album.unread + ' Bilder mit neuen Kommentaren' }));
+      }
+      var card = el('a', { class: 'shelf__card', href: albumHref(album) }, [cover, meta]);
+      if (album.unread) card.classList.add('shelf__card--new');
+
+      var slot = el('div', { class: 'shelf__slot' }, [card]);
+      // Umbenennen darf, wer es angelegt hat, und Admins — genau wie in der
+      // Datenbank. Ein Album entsteht jetzt mit einer Eingabeaufforderung, und
+      // dabei verschreibt man sich; ohne das wäre der Tippfehler für immer.
+      if (album.ownerId === (state.me && state.me.id) || (state.me && state.me.isAdmin)) {
+        slot.appendChild(el('button', {
+          class: 'shelf__rename', title: 'Album umbenennen',
+          onclick: function () { askRename(album); }
+        }, ['✎']));
+      }
+      shelf.appendChild(slot);
       if (album.coverUrl) {
         cover.style.backgroundImage = 'url(' + album.coverUrl + ')';
         cover.classList.add('is-loaded');
       }
     });
     nodes.feed.appendChild(shelf);
+  }
+
+  function askRename(album) {
+    var title = prompt('Wie soll das Album heißen?', album.title);
+    if (title === null) return;
+    title = title.trim();
+    if (!title || title === album.title) return;
+    PS.data.renameAlbum(album, title).then(function () {
+      album.title = title;
+      renderShelf();
+    }).catch(function (error) {
+      PS.toast(PS.escapeError(error), 'error');
+    });
   }
 
   function askNewAlbum() {
@@ -321,7 +367,13 @@
     var tileFace = PS.people.avatar(item.uploader, 24);
     if (tileFace) { tileFace.classList.add('tile__face'); tile.appendChild(tileFace); }
     if (commentCount(item)) {
-      tile.appendChild(el('span', { class: 'tile__talk', text: '💬 ' + commentCount(item) }));
+      tile.appendChild(el('span', {
+        class: 'tile__talk' + (item.unread ? ' is-new' : ''),
+        // Die Gesamtzahl bleibt stehen; neu ist eine Farbe und ein Punkt, kein
+        // zweiter Zähler. Zwei Zahlen nebeneinander liest niemand.
+        title: item.unread ? PS.plural(item.unread, 'neuer Kommentar', 'neue Kommentare') : null,
+        text: '💬 ' + commentCount(item)
+      }));
     }
     tile._item = item;
     tile._img = img;
@@ -361,17 +413,27 @@
       class: 'btn btn--ghost lightbox__comments-toggle',
       onclick: toggleComments
     }, ['💬']);
+    nodes.lbMove = el('button', {
+      class: 'btn btn--ghost is-hidden',
+      title: 'In ein anderes Album verschieben',
+      onclick: askToMove
+    }, [
+      el('span', { class: 'btn__wide', text: 'Verschieben' }),
+      el('span', { class: 'btn__narrow', text: '↦' })
+    ]);
     nodes.lbDelete = el('button', {
       class: 'btn btn--ghost btn--danger is-hidden',
       onclick: askToDelete
     }, ['Löschen']);
     nodes.confirm = buildConfirm();
+    nodes.moveBox = buildMoveBox();
 
     nodes.lightbox = el('div', { class: 'lightbox is-hidden' }, [
       el('div', { class: 'lightbox__bar' }, [
         nodes.lbCaption,
         el('div', { class: 'lightbox__tools' }, [
           nodes.lbComments,
+          nodes.lbMove,
           nodes.lbDelete,
           nodes.lbDownload,
           el('button', { class: 'btn btn--ghost', onclick: closeLightbox }, ['✕'])
@@ -384,14 +446,16 @@
         el('button', { class: 'lightbox__nav lightbox__nav--next', onclick: function () { step(1); } }, ['›'])
       ]),
       buildComments(),
-      nodes.confirm
+      nodes.confirm,
+      nodes.moveBox
     ]);
     app.appendChild(nodes.lightbox);
 
     document.addEventListener('keydown', function (event) {
       if (state.lightbox < 0) return;
       if (event.key === 'Escape') {
-        if (!nodes.confirm.classList.contains('is-hidden')) hideConfirm();
+        if (!nodes.moveBox.classList.contains('is-hidden')) hideMove();
+        else if (!nodes.confirm.classList.contains('is-hidden')) hideConfirm();
         else if (!nodes.comments.classList.contains('is-hidden')) toggleComments();
         else closeLightbox();
       }
@@ -448,6 +512,11 @@
     // Yours means yours: the account that uploaded it, checked server-side
     // too, rather than a name someone typed.
     nodes.lbDelete.classList.toggle('is-hidden', !mine(item.uploaderId));
+    // Verschieben braucht ein Ziel: bei einem einzigen Album gibt es keins,
+    // und ein Knopf, der nur „geht nicht" sagen kann, gehört nicht hin.
+    var mayMove = (mine(item.uploaderId) || (state.me && state.me.isAdmin)) &&
+      state.shelf && state.shelf.length > 1;
+    nodes.lbMove.classList.toggle('is-hidden', !mayMove);
     hideConfirm();
     updateCommentButton(item);
     if (!nodes.comments.classList.contains('is-hidden')) renderComments();
@@ -519,8 +588,36 @@
   }
 
   function toggleComments() {
-    var open = nodes.comments.classList.toggle('is-hidden');
-    if (!open) renderComments();
+    var hidden = nodes.comments.classList.toggle('is-hidden');
+    if (hidden) return;
+    renderComments();
+    markRead(state.visible[state.lightbox]);
+  }
+
+  /**
+   * Gelesen ist, was jemand aufgemacht hat — nicht, was vorbeigescrollt ist.
+   *
+   * Deshalb hier und nicht beim Öffnen des Bildes: der Hinweis soll so lange
+   * stehenbleiben, bis der Kommentar wirklich vor Augen war.
+   */
+  function markRead(item) {
+    if (!item || !item.unread) return;
+    item.unread = 0;
+    refreshTile(item);
+    // Ein Lesestand ist nichts, wofür man jemanden mit einer Fehlermeldung
+    // behelligt: schlimmstenfalls steht der Punkt beim nächsten Mal noch da.
+    PS.data.markRead(item.id).catch(function () {});
+  }
+
+  /** Nur die eine Kachel neu anfassen — `render()` würde das Scrollen verlieren. */
+  function refreshTile(item) {
+    var tiles = nodes.feed.querySelectorAll('.tile');
+    for (var i = 0; i < tiles.length; i++) {
+      if (tiles[i]._item !== item) continue;
+      var badge = tiles[i].querySelector('.tile__talk');
+      if (badge) { badge.classList.remove('is-new'); badge.removeAttribute('title'); }
+      return;
+    }
   }
 
   function commentCount(item) {
@@ -691,6 +788,67 @@
     closeLightbox();
     render();
     PS.toast('Foto gelöscht.');
+  }
+
+  // --- in ein anderes Album ---------------------------------------------------
+
+  function buildMoveBox() {
+    nodes.moveTo = el('select', { class: 'field' });
+    nodes.moveGo = el('button', { class: 'btn btn--primary', onclick: doMove }, ['Verschieben']);
+    return el('div', { class: 'confirm is-hidden' }, [
+      el('div', { class: 'confirm__box' }, [
+        el('h2', { class: 'confirm__title', text: 'Wohin damit?' }),
+        nodes.moveTo,
+        el('p', { class: 'hint', text:
+          'Kommentare kommen mit. Die Datei selbst bleibt liegen, wo sie liegt — ' +
+          'das sieht man nicht, spart aber ein Kopieren, bei dem etwas verloren gehen kann.' }),
+        el('div', { class: 'confirm__actions' }, [
+          el('button', { class: 'btn', onclick: hideMove }, ['Abbrechen']),
+          nodes.moveGo
+        ])
+      ])
+    ]);
+  }
+
+  function askToMove() {
+    var item = state.visible[state.lightbox];
+    if (!item || !state.shelf) return;
+    nodes.moveTo.innerHTML = '';
+    state.shelf.forEach(function (album) {
+      if (state.album && album.id === state.album.id) return;
+      nodes.moveTo.appendChild(el('option', { value: album.id, text: album.title }));
+    });
+    nodes.moveBox.classList.remove('is-hidden');
+  }
+
+  function hideMove() {
+    nodes.moveBox.classList.add('is-hidden');
+    nodes.moveGo.disabled = false;
+    nodes.moveGo.textContent = 'Verschieben';
+  }
+
+  async function doMove() {
+    var item = state.visible[state.lightbox];
+    var target = nodes.moveTo.value;
+    if (!item || !target) return;
+    nodes.moveGo.disabled = true;
+    nodes.moveGo.textContent = 'Wird verschoben …';
+    try {
+      await PS.data.movePhoto(item, target);
+    } catch (error) {
+      hideMove();
+      PS.toast(PS.escapeError(error), 'error');
+      return;
+    }
+    // Aus diesem Album ist es weg — dieselbe Bewegung wie beim Löschen, nur
+    // dass es woanders wieder auftaucht.
+    state.items = state.items.filter(function (other) { return other.id !== item.id; });
+    var name = '';
+    state.shelf.forEach(function (album) { if (album.id === target) name = album.title; });
+    hideMove();
+    closeLightbox();
+    render();
+    PS.toast('Verschoben nach „' + name + '".');
   }
 
   PS.requireSignIn(document.getElementById('app'), boot);

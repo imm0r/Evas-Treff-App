@@ -549,6 +549,26 @@ img { display: block; max-width: 100%; }
 .shelf__title { display: block; font-family: var(--display); font-size: 16px; }
 .shelf__count { display: block; margin-top: 2px; font-size: 12px; color: var(--ink-dim); }
 
+/* Wo etwas Neues steht. Die Farbe trägt den Hinweis, damit man ihn beim
+   Überfliegen sieht, ohne die Zeile zu lesen. */
+.shelf__new { display: block; margin-top: 4px; font-size: 12px; color: var(--accent); font-weight: 600; }
+.shelf__card--new { border-color: var(--accent); }
+
+/* Umbenennen liegt neben der Karte, nicht darin: ein Knopf in einem Link ist
+   auf dem Telefon ein Glücksspiel, welches von beidem man getroffen hat. */
+.shelf__slot { position: relative; }
+.shelf__rename {
+  position: absolute; top: 6px; right: 6px;
+  width: 30px; height: 30px; padding: 0;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.55); color: #fff;
+  font: inherit; font-size: 14px; line-height: 30px; cursor: pointer;
+  opacity: 0; transition: opacity 150ms;
+}
+.shelf__slot:hover .shelf__rename, .shelf__rename:focus-visible { opacity: 1; }
+/* Auf dem Telefon gibt es kein Hover — dort steht er einfach da. */
+@media (hover: none) { .shelf__rename { opacity: 0.8; } }
+
 /* A face next to a name, cropped out of the group photo. Always decoration:
    the name stays readable on its own, for albums that have no photo. */
 .avatar {
@@ -670,6 +690,13 @@ img { display: block; max-width: 100%; }
   color: #fff;
   font-size: 10px;
   pointer-events: none;
+}
+/* Nicht ein zweiter Zähler, sondern derselbe in Farbe: zwei Zahlen auf einer
+   Kachel liest niemand, eine hervorgehobene sieht man sofort. */
+.tile__talk.is-new {
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-weight: 700;
 }
 
 .lightbox__comments-toggle { min-width: 44px; }
