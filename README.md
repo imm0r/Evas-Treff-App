@@ -80,6 +80,34 @@ covers a whole album, however many photos are in it; after that the browser
 fetches and caches them like any other image. That is one request per screen
 instead of one per tile.
 
+**One album is not a dead end.** With exactly one album the app opens it
+straight away — that is what the links already in the family's group chat do,
+and a shelf holding one card is a pointless stop. But "Neues Album" lives on
+the shelf, so for a while the shortcut meant a second album could not be
+created at all: the shelf was never reached and the way back was hidden
+"because there is nothing to go back to". The shortcut stayed; the way out is
+now always offered, and `?alben` forces the shelf.
+
+**A photo can change album, and only that.** Tidying up happens after the
+upload — somebody empties their phone, and half of it turns out to belong to
+Easter rather than the birthday. Moving is a plain `album_id` update by the
+uploader or an admin, the same rule as deleting. The file itself stays where it
+was written: the path carries the old album's name and nobody sees it, whereas
+copying an object to a prettier path is a chance to lose it. Row level security
+cannot restrict columns, so the column grant does — `grant update (album_id)`
+and nothing else, or the same person could rewrite `uploader_id` and the
+authorship every other rule rests on would be decoration.
+
+**"There is something new on that picture."** The ask was *where*, not merely
+*that*, so it is tracked per photo: a row in `comment_reads` appears the moment
+somebody actually opens a photo's thread — not when they scroll past it — and
+what you have read is visible to you alone. In a family, "I can see that you
+saw it" is not a feature, it is an accusation. A floor in the profile
+(`comments_seen_at`, set to now for everyone the migration touched) keeps thirty
+old comments from all lighting up at once, and keeps the shelf's count cheap:
+it only ever asks for comments newer than the floor. The shelf counts pictures
+rather than comments, because a picture is somewhere you can go.
+
 **Dates are a list, not a month grid.** A calendar grid on a phone is mostly
 empty boxes, and the question is never "what was on the 14th" but "what is
 next". So: one list, nearest first, and anything past today drops off — in the
@@ -208,7 +236,10 @@ Three checks, all of which measure the code against something other than itself:
   being a no-op, the delete button appearing only on your own things, the guest
   list refusing a non-admin, the calendar asking only for dates from today
   onwards and sorting birthdays in among the events, an empty time arriving as
-  `null` rather than `00:00`, and a signed-out page requesting nothing at all.
+  `null` rather than `00:00`, a single album still reaching the shelf so a
+  second one can be created, a move sending `album_id` and nothing else, the
+  unread mark appearing only on the picture that has one and clearing when the
+  thread is opened, and a signed-out page requesting nothing at all.
 - `tools/query-check.mjs` (`npm run check:api`) — every query the app makes,
   put to the real Supabase without a session. A stub can only confirm what it
   was taught: it hands back canned JSON and never reads the `select`, so it

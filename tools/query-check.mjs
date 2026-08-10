@@ -50,7 +50,10 @@ const asked = [];
 function makeSandbox() {
   const PS = {
     sb: {
-      select: async (table, query) => { asked.push({ table, query }); return []; },
+      // Eine Zeile, nicht keine: mit `[]` wird jeder Zweig hinter „wenn es
+      // Treffer gibt" nie betreten, und genau dort steht oft die zweite
+      // Abfrage. Der Inhalt ist egal — mitgeschrieben wird die Frage.
+      select: async (table, query) => { asked.push({ table, query }); return [{}]; },
       insert: async () => [{}],
       patch: async () => undefined,
       remove: async () => undefined,

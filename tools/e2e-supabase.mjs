@@ -106,8 +106,9 @@ function makeBackend() {
   return {
     otpRequests: [], inserts: [], deletes: [], uploads: [], signCalls: 0,
     albums: [], photos: [], comments: [], people: [], board: [], invites: [],
-    events: [], queries: [],
-    profile: { id: 'user-1', email: 'ich@example.de', is_admin: true, person_id: 'p1', people: { name: 'Maria' } }
+    events: [], queries: [], reads: [], patches: [],
+    profile: { id: 'user-1', email: 'ich@example.de', is_admin: true, person_id: 'p1',
+      comments_seen_at: '2026-01-01T00:00:00Z', people: { name: 'Maria' } }
   };
 }
 
@@ -154,12 +155,62 @@ async function stub(page, back) {
     }
 
     if (p === '/rest/v1/albums' && request.method() === 'GET') return json(200, back.albums);
+    if (p === '/rest/v1/albums' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'albums', row });
+      const saved = Object.assign({ id: 'alb-' + (back.albums.length + 1), photos: [{ count: 0 }] }, row);
+      back.albums.push(saved);
+      return json(201, [saved]);
+    }
+    if (p === '/rest/v1/albums' && request.method() === 'PATCH') {
+      const row = JSON.parse(request.postData());
+      back.patches.push({ table: 'albums', row, query: url.search });
+      return json(204, {});
+    }
+    // Der Lesestand: RLS lässt nur die eigenen Zeilen durch, das bildet der
+    // Stub nach — sonst prüfte der Test eine Sicht, die es nicht gibt.
+    if (p === '/rest/v1/comment_reads' && request.method() === 'GET') {
+      return json(200, back.reads.filter((r) => r.profile_id === back.profile.id)
+        .map((r) => ({ photo_id: r.photo_id, seen_at: r.seen_at })));
+    }
+    if (p === '/rest/v1/comment_reads' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'comment_reads', row, query: url.search });
+      const old = back.reads.find((r) =>
+        r.profile_id === row.profile_id && r.photo_id === row.photo_id);
+      if (old) old.seen_at = row.seen_at; else back.reads.push(row);
+      return json(201, [row]);
+    }
+    // Was das Regal fragt: nur die Kommentare seit dem Boden.
+    if (p === '/rest/v1/comments' && request.method() === 'GET') {
+      const from = (url.searchParams.get('created_at') || '').replace('gt.', '');
+      const rows = [];
+      back.photos.forEach((photo) => (photo.comments || []).forEach((c) => {
+        if (from && c.created_at <= from) return;
+        rows.push({ photo_id: photo.id, created_at: c.created_at,
+          author_id: c.author_id, photos: { album_id: photo.album_id } });
+      }));
+      return json(200, rows);
+    }
     if (p === '/rest/v1/photos' && request.method() === 'GET') {
       if (url.searchParams.get('select') === 'album_id,thumb_path,taken_at') {
         return json(200, back.photos.map((x) => ({ album_id: x.album_id, thumb_path: x.thumb_path, taken_at: x.taken_at })));
       }
       const album = (url.searchParams.get('album_id') || '').replace('eq.', '');
-      return json(200, back.photos.filter((x) => x.album_id === album));
+      return json(200, back.photos.filter((x) => x.album_id === album).map((x) =>
+        Object.assign({}, x, {
+          comment_reads: back.reads
+            .filter((r) => r.profile_id === back.profile.id && r.photo_id === x.id)
+            .map((r) => ({ seen_at: r.seen_at }))
+        })));
+    }
+    if (p === '/rest/v1/photos' && request.method() === 'PATCH') {
+      const row = JSON.parse(request.postData());
+      back.patches.push({ table: 'photos', row, query: url.search });
+      const id = (url.searchParams.get('id') || '').replace('eq.', '');
+      const photo = back.photos.find((x) => x.id === id);
+      if (photo) Object.assign(photo, row);
+      return json(204, {});
     }
     if (p === '/rest/v1/photos' && request.method() === 'POST') {
       const row = JSON.parse(request.postData());
@@ -371,6 +422,17 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   check('regal: mit Titelbild aus signierter URL',
     (await page.locator('.shelf__cover.is-loaded').count()) >= 1);
 
+  // Der Boden im Profil steht auf Anfang 2026, der einzige Kommentar ist von
+  // August und von jemand anderem — also genau ein Bild mit Neuem, und nur im
+  // ersten Album.
+  check('neue kommentare: das Regal sagt, in welchem Album etwas steht',
+    (await page.locator('.shelf__new').count()) === 1 &&
+    (await page.textContent('.shelf__new')) === '1 Bild mit neuen Kommentaren',
+    await page.locator('.shelf__new').allTextContents().then(JSON.stringify));
+  check('umbenennen: wird angeboten, wo man darf',
+    (await page.locator('.shelf__rename').count()) === 2);
+  await shot(page, '2-regal');
+
   const before = back.signCalls;
   await page.locator('.shelf__card').first().click();
   await page.waitForSelector('.tile.is-loaded');
@@ -405,12 +467,24 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     (await page.locator('.tile__face').count()) === (await page.locator('.tile').count()),
     `${await page.locator('.tile__face').count()} Gesichter zu ${await page.locator('.tile').count()} Kacheln`);
 
+  check('neue kommentare: nur die Kachel, auf der etwas steht',
+    (await page.locator('.tile__talk.is-new').count()) === 1);
+
   await page.locator('.tile').first().click();
   await page.waitForSelector('.lightbox:not(.is-hidden)');
+  check('verschieben: wird angeboten, wenn es ein Ziel gibt',
+    await page.isVisible('.lightbox__tools .btn[title*="Album"]'));
   await page.click('.lightbox__comments-toggle');
   await page.waitForSelector('.comments:not(.is-hidden)');
   check('kommentare: kommen mit dem Foto, ohne Nachladen',
     (await page.textContent('.comment__text')) === 'Schöner Abend!');
+
+  // Gelesen ist, was aufgemacht wurde — nicht, was vorbeigescrollt ist.
+  await page.waitForFunction(() => !document.querySelector('.tile__talk.is-new'));
+  const read = back.inserts.find((i) => i.table === 'comment_reads');
+  check('neue kommentare: aufmachen schreibt den Lesestand, für mich allein',
+    read.row.profile_id === 'user-1' && read.row.photo_id === 'ph-1' &&
+    read.query.includes('on_conflict=profile_id,photo_id'), JSON.stringify(read));
 
   await page.fill('.comments__input', 'Fand ich auch');
   await page.click('.comments__form .btn--primary');
@@ -425,9 +499,76 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await page.locator('.tile').nth(1).click();
   await page.waitForSelector('.lightbox:not(.is-hidden)');
   check('löschen: nicht beim Foto eines anderen', !(await page.isVisible('.btn--danger')));
+  // Admin darf auch fremde Fotos umhängen — dieselbe Regel wie in der Datenbank.
+  check('verschieben: Admins dürfen auch fremde Fotos umhängen',
+    await page.isVisible('.lightbox__tools .btn[title*="Album"]'));
+
+  await page.click('.lightbox__tools .btn[title*="Album"]');
+  await page.waitForSelector('.confirm:not(.is-hidden) select');
+  check('verschieben: das Album, in dem man steht, steht nicht zur Auswahl',
+    (await page.locator('.confirm:not(.is-hidden) option').allTextContents())
+      .join('|') === 'Weihnachten');
+  const tilesBefore = await page.locator('.tile').count();
+  await page.click('.confirm:not(.is-hidden) .btn--primary');
+  await page.waitForFunction((n) => document.querySelectorAll('.tile').length === n - 1, tilesBefore);
+  const moved = back.patches.find((i) => i.table === 'photos');
+  // Nur `album_id` — alles andere darf die Datenbank ohnehin nicht, und die
+  // App soll es auch gar nicht erst schicken.
+  check('verschieben: schickt nur das Album, nichts sonst',
+    JSON.stringify(moved.row) === '{"album_id":"alb-2"}' && moved.query.includes('id=eq.ph-2'),
+    JSON.stringify(moved));
 
   await shot(page, '2-album');
   check('keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 2b. ein einziges Album darf keine Sackgasse sein -----------------------
+//
+// Genau der Zustand, in dem die Familie saß: ein Album, also sprang die Seite
+// immer hinein, das Regal erschien nie — und weil „Neues Album" nur dort
+// steht, war ein zweites Album gar nicht anlegbar.
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 0 }] }
+  ];
+
+  await page.goto(origin + '/index.html' + SESSION);
+  // Auf das GELADENE Album warten: die Leiste steht sofort da, aber bis der
+  // Titel darin steht, vergeht eine Abfrage.
+  await page.waitForSelector('.act-add-photos:not(.is-hidden)');
+  check('ein Album: die Abkürzung führt weiterhin direkt hinein',
+    (await page.textContent('.topbar__title')) === "Eva's Treff");
+  check('ein Album: der Weg zurück aufs Regal steht trotzdem da',
+    await page.isVisible('.topbar__back'));
+
+  await page.click('.topbar__back');
+  await page.waitForSelector('.shelf__card');
+  check('ein Album: und führt wirklich aufs Regal',
+    (await page.locator('.shelf__card').count()) === 1 &&
+    (await page.textContent('.topbar__title')) === 'Familie');
+
+  // Der Knopf, den es vorher nie zu sehen gab.
+  page.on('dialog', (d) => d.accept('Ostern 2026'));
+  check('ein Album: „Neues Album" ist von hier aus erreichbar',
+    await page.isVisible('.act-new-album'));
+  await page.click('.act-new-album');
+  await page.waitForFunction(() => location.pathname.endsWith('/upload.html'));
+  const album = back.inserts.find((i) => i.table === 'albums');
+  check('ein Album: das zweite lässt sich anlegen und öffnet sich zum Befüllen',
+    album.row.title === 'Ostern 2026' && album.row.created_by === 'user-1' &&
+    page.url().includes('album=ostern-2026'),
+    JSON.stringify(album.row) + ' → ' + page.url());
+
+  check('ein Album: keine Fehler', errors.length === 0, errors.join('\n'));
   await context.close();
 }
 
