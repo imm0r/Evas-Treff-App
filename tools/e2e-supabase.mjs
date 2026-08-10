@@ -469,6 +469,21 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     (await page.locator('.tile__face').count()) === (await page.locator('.tile').count()),
     `${await page.locator('.tile__face').count()} Gesichter zu ${await page.locator('.tile').count()} Kacheln`);
 
+  // Geometrie statt Klassenname: der Name stand hinter dem Kopf und war
+  // unlesbar. Gemessen wird, wo der Text wirklich anfängt — eine Prüfung auf
+  // „hat die Klasse" wäre bei jeder anderen Einzugsbreite trotzdem grün.
+  const overlap = await page.locator('.tile--face').first().evaluate((tile) => {
+    const by = tile.querySelector('.tile__by');
+    const face = tile.querySelector('.tile__face');
+    const b = by.getBoundingClientRect();
+    const f = face.getBoundingClientRect();
+    const textStartsAt = b.left + parseFloat(getComputedStyle(by).paddingLeft);
+    return { textStartsAt, faceEndsAt: f.right, name: by.textContent };
+  });
+  check('kachel: der Name steht neben dem Kopf, nicht darunter',
+    overlap.textStartsAt >= overlap.faceEndsAt,
+    `"${overlap.name}" beginnt bei ${overlap.textStartsAt}, der Kopf endet bei ${overlap.faceEndsAt}`);
+
   check('neue kommentare: nur die Kachel, auf der etwas steht',
     (await page.locator('.tile__talk.is-new').count()) === 1);
 

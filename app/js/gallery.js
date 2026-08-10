@@ -365,7 +365,14 @@
       onclick: function () { openLightbox(state.visible.indexOf(item)); }
     }, [img, el('span', { class: 'tile__by', text: shown })]);
     var tileFace = PS.people.avatar(item.uploader, 24);
-    if (tileFace) { tileFace.classList.add('tile__face'); tile.appendChild(tileFace); }
+    // Die Klasse an der Kachel, nicht nur am Gesicht: der Name steht im DOM
+    // vor dem Gesicht, also kann ihn kein Geschwister-Selektor einrücken — und
+    // ohne Einrückung liegt er beim Hovern unter dem Kopf und ist unlesbar.
+    if (tileFace) {
+      tileFace.classList.add('tile__face');
+      tile.classList.add('tile--face');
+      tile.appendChild(tileFace);
+    }
     if (commentCount(item)) {
       tile.appendChild(el('span', {
         class: 'tile__talk' + (item.unread ? ' is-new' : ''),
