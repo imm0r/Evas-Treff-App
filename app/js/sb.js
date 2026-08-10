@@ -216,14 +216,60 @@
     return response;
   }
 
+  /*
+   * Aus einer Absage des Servers ein Satz, den man jemandem zeigen kann.
+   *
+   * Der Fehler trägt `status` und `code` mit sich (letzterer der SQLSTATE von
+   * Postgres). Aufrufer, die auf einen bestimmten Fall reagieren wollen,
+   * prüfen die CODES — nicht den deutschen Text. Ein Text ist zum Vorlesen da
+   * und darf umformuliert werden, ohne dass anderswo etwas kaputtgeht.
+   */
   async function explain(response) {
     var body = await response.json().catch(function () { return {}; });
-    if (response.status === 401 || response.status === 403) {
-      return new Error('Dafür fehlt dir die Berechtigung.');
-    }
-    if (response.status === 409) return new Error('Das gibt es schon.');
-    return new Error(body.message || body.error || ('Der Server antwortet mit ' + response.status + '.'));
+    var error = new Error(readable(response.status, body));
+    error.status = response.status;
+    error.code = body.code || '';
+    return error;
   }
+
+  function readable(status, body) {
+    if (status === 401 || status === 403) return 'Dafür fehlt dir die Berechtigung.';
+    if (status === 409 || body.code === '23505') return 'Das gibt es schon.';
+
+    /*
+     * Eine verletzte Prüfregel kam bisher WÖRTLICH aus Postgres heraus, und
+     * das stand dann so auf dem Telefon:
+     *
+     *   new row for relation "recipes" violates check constraint
+     *   "recipes_servings_check"
+     *
+     * Für die Person davor ist das kein Satz, sondern ein Schreck. Der
+     * Regelname sagt aber, um welche Spalte es geht, und daraus lässt sich ein
+     * deutscher Satz bauen. Fehlt ein Feld in der Liste, bleibt es beim
+     * allgemeinen Satz — ungenau, aber nie falsch und nie roh.
+     */
+    if (body.code === '23514' || /violates check constraint/.test(body.message || '')) {
+      var feld = /_([a-z_]+)_check/.exec(body.message || '');
+      var name = feld && FELDER[feld[1]];
+      return name
+        ? 'Bei „' + name + '" passt der Wert nicht.'
+        : 'Ein Wert passt nicht. Bitte schau nochmal über die Eingaben.';
+    }
+    if (body.code === '23503') return 'Das gehört zu etwas, das es nicht mehr gibt.';
+
+    return body.message || body.error || ('Der Server antwortet mit ' + status + '.');
+  }
+
+  var FELDER = {
+    servings: 'für wie viele Personen',
+    title: 'Titel',
+    body: 'Text',
+    name: 'Name',
+    note: 'Hinweis',
+    ingredients: 'Zutaten',
+    steps: 'Zubereitung',
+    email: 'E-Mail-Adresse'
+  };
 
   /** SELECT. `query` is a PostgREST query string without the leading ?. */
   sb.select = async function (table, query) {

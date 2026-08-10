@@ -118,12 +118,38 @@
     return seen;
   }
 
+  /*
+   * Anlegen, und wenn der Name schon vergeben ist, mit einer Nummer nochmal.
+   *
+   * Der Slug ist eindeutig, weil er in der Adresse steht — aber die NAMEN sind
+   * es nicht: „Weihnachten" gibt es jedes Jahr, und Kartoffelsalat kocht jede
+   * Familie zweimal. Ohne das hier bekam die zweite Person „Das gibt es
+   * schon." und war fertig, obwohl sie nichts falsch gemacht hatte.
+   *
+   * Über den Fehler des Servers statt über eine vorherige Abfrage: zwei Leute,
+   * die gleichzeitig anlegen, kämen sonst beide durch die Prüfung und einer
+   * scheiterte trotzdem. So gewinnt der eine und der andere wird `-2`.
+   */
+  async function insertWithFreeSlug(table, row) {
+    var base = row.slug;
+    for (var n = 2; n <= 50; n++) {
+      try {
+        return (await PS.sb.insert(table, row))[0];
+      } catch (error) {
+        // Auf den CODE prüfen, nicht auf den deutschen Text — der darf sich
+        // ändern, ohne dass das Anlegen still aufhört zu funktionieren.
+        if (error.code !== '23505' && error.status !== 409) throw error;
+        row.slug = base + '-' + n;
+      }
+    }
+    throw new Error('Diesen Namen gibt es schon sehr oft. Nimm bitte einen anderen.');
+  }
+
   data.createAlbum = async function (title, date, slug) {
-    var rows = await PS.sb.insert('albums', {
+    return insertWithFreeSlug('albums', {
       slug: slug, title: title, event_date: date || null,
       created_by: PS.sb.user() && PS.sb.user().id
     });
-    return rows[0];
   };
 
   // --- photos ---------------------------------------------------------------
@@ -545,7 +571,7 @@
   };
 
   data.createRecipe = async function (recipe) {
-    var rows = await PS.sb.insert('recipes', {
+    return insertWithFreeSlug('recipes', {
       slug: recipe.slug,
       title: recipe.title,
       servings: recipe.servings || null,
@@ -554,7 +580,6 @@
       note: recipe.note || null,
       created_by: PS.sb.user() && PS.sb.user().id
     });
-    return rows[0];
   };
 
   data.updateRecipe = async function (recipe, fields) {
