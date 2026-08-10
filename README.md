@@ -1,7 +1,7 @@
 # Eva's Treff
 
-Der Familien-Hub: Fotoalben, Termine, Pinnwand, Gästeliste. Statische Seite auf
-GitHub Pages, Daten in Supabase.
+Der Familien-Hub: Fotoalben, Termine, Pinnwand, Rezepte, Gästeliste. Statische
+Seite auf GitHub Pages, Daten in Supabase.
 
 **Live:** https://imm0r.github.io/Evas-Treff-App/
 
@@ -17,13 +17,14 @@ tools/                      Testsuiten, Migration, lokaler Server
 ```
 
 Bereiche: **Alben** (`index.html`), **Hochladen** (`upload.html`),
-**Termine** (`dates.html`), **Pinnwand** (`board.html`) und **Familie**
-(`admin.html`, nur für Admins — dort stehen auch die Geburtstage).
+**Termine** (`dates.html`), **Pinnwand** (`board.html`), **Rezepte**
+(`rezepte.html`) und **Familie** (`admin.html`, nur für Admins — dort stehen
+auch die Geburtstage).
 
 ---
 
 A family hub for a couple of dozen relatives: photo albums, dates and birthdays,
-a pinboard, and the guest list that decides who may see any of it. A static page on GitHub Pages in
+a pinboard, recipes, and the guest list that decides who may see any of it. A static page on GitHub Pages in
 front of a Supabase project.
 
 ```
@@ -37,7 +38,7 @@ front of a Supabase project.
 
 ## Why it is built this way
 
-**No backend of our own, and no build step.** Five HTML files, a handful of
+**No backend of our own, and no build step.** Six HTML files, a handful of
 scripts, one stylesheet. Supabase is reached over plain HTTP — PostgREST,
 Storage and Auth are all just endpoints — rather than through the client
 library, so there is nothing to compile and the Content-Security-Policy names
@@ -79,6 +80,28 @@ home address.
 covers a whole album, however many photos are in it; after that the browser
 fetches and caches them like any other image. That is one request per screen
 instead of one per tile.
+
+**A recipe is a line per ingredient, and nothing is guessed out of it.**
+Ingredients and steps are one text field each; a line becomes a bullet, an
+empty line becomes nothing. What the app deliberately does *not* do is split
+"500 g Mehl" into an amount and an ingredient. Family recipes say "eine Prise",
+"2–3 Äpfel", "Mehl bis es geht" — every split of that is a guess, and a guess
+that is wrong on Oma's card is worse than no column at all. It can grow a
+parser later; it cannot un-mangle what it stored wrong.
+
+**One main picture, and more if you like.** There is no `is_cover` flag and no
+second column on the recipe: two places holding the same truth drift apart. The
+main picture is simply the one with the lowest `sort_order`, and "make this the
+main one" moves it below all the others — one `UPDATE`, not a renumbering loop
+that can stop halfway and leave two covers or none. A new picture goes to the
+*end* of the row, so the first one uploaded stays the face of the recipe rather
+than the last step photo silently taking over.
+
+Photos may be reordered by whoever owns the *recipe*, not only by whoever
+uploaded the picture — otherwise nobody could fix the cover once two people had
+contributed. That rule is a policy in the database, proven against it in a
+rolled-back transaction: own recipe yes, someone else's no, a stranger's photo
+on my recipe yes, the same photo on their recipe no.
 
 **One album is not a dead end.** With exactly one album the app opens it
 straight away — that is what the links already in the family's group chat do,
@@ -255,14 +278,18 @@ Three checks, all of which measure the code against something other than itself:
   2560px JPEG, a HEIC arriving as one at all, uploading the same file twice
   being a no-op, the delete button appearing only on your own things, the guest
   list refusing a non-admin, the calendar asking only for dates from today
-  onwards and sorting birthdays in among the events, an empty time arriving as
+  onwards and sorting birthdays in among the events, a recipe's ingredients
+  surviving as the lines somebody typed, an empty time arriving as
   `null` rather than `00:00`, a date that has started still being listed while
   one that has ended is not, a single album still reaching the shelf so a
   second one can be created, a move sending `album_id` and nothing else, the
   unread mark appearing only on the picture that has one and clearing when the
   thread is opened, and a signed-out page requesting nothing at all.
 - `tools/query-check.mjs` (`npm run check:api`) — every query the app makes,
-  put to the real Supabase without a session. A stub can only confirm what it
+  put to the real Supabase without a session. *Every* one: it walks whatever is
+  on `PS.data` rather than a hand-kept list, because the hand-kept list went
+  stale the moment recipes were added and quietly went on checking the old
+  set. A stub can only confirm what it
   was taught: it hands back canned JSON and never reads the `select`, so it
   cannot know whether PostgREST could answer it. This runs `app/js/data.js`
   itself, with a `PS` that records queries instead of sending them, and then

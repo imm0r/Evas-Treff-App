@@ -13,7 +13,8 @@
   var SECTIONS = [
     { page: 'index.html', label: 'Alben', icon: '📷' },
     { page: 'dates.html', label: 'Termine', icon: '📅' },
-    { page: 'board.html', label: 'Pinnwand', icon: '📌' }
+    { page: 'board.html', label: 'Pinnwand', icon: '📌' },
+    { page: 'rezepte.html', label: 'Rezepte', icon: '🍰' }
   ];
 
   // Only an admin can do anything on the guest list, and the rules say so
