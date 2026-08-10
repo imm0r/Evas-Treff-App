@@ -1,13 +1,12 @@
 /*
- * Serve the app locally, for trying it against a real repository before
- * putting it on Pages.
+ * Serve the app locally, for trying it against the real Supabase project
+ * before putting it on Pages.
  *
- * A plain file:// open also works, but not everything does: crypto.subtle and
- * the Cache API only exist in a secure context, so uploads fall back to a
- * weaker fingerprint and nothing is cached between visits. http://localhost
- * counts as secure, so this is the honest way to test.
+ * A plain file:// open also works, but not everything does: crypto.subtle only
+ * exists in a secure context, so uploads fall back to a weaker fingerprint.
+ * http://localhost counts as secure, so this is the honest way to test.
  *
- * Usage: node photoshare/tools/serve.mjs [port]
+ * Usage: node tools/serve.mjs [port]
  */
 import { createServer } from 'node:http';
 import { readFile } from 'node:fs/promises';
@@ -36,5 +35,5 @@ createServer(async (req, res) => {
     res.writeHead(404).end('not found');
   }
 }).listen(PORT, () => {
-  console.log(`photoshare on http://localhost:${PORT}/  (share links: /share.html)`);
+  console.log(`Familien-Hub auf http://localhost:${PORT}/`);
 });

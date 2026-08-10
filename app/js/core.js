@@ -1,6 +1,6 @@
 /*
- * Shared plumbing: where the album lives, who is looking at it, and the small
- * DOM helpers the three pages have in common.
+ * Shared plumbing: who is looking at the hub, and the small DOM and formatting
+ * helpers every page has in common.
  *
  * Classic script, not an ES module, on purpose: modules are blocked under the
  * file:// origin, and "just open index.html" has to keep working when GitHub
@@ -22,144 +22,18 @@
     } catch (e) { /* private mode: settings just do not survive the tab */ }
   }
 
-  var defaults = global.PHOTOSHARE_CONFIG || {};
-  var config = null;
-
-  /**
-   * Pull settings out of the share link, remember them, then scrub the URL.
-   *
-   * The token travels in the fragment so it never reaches a web server (not
-   * even as a Referer), and we drop it from the address bar right away so a
-   * screenshot of the gallery does not hand out write access.
-   */
-  function absorbHash() {
-    var hash = global.location.hash.replace(/^#/, '');
-    if (!hash) return false;
-    var params = new URLSearchParams(hash);
-    var touched = false;
-    [['r', 'repo'], ['k', 'token'], ['b', 'branch'], ['t', 'title']].forEach(function (pair) {
-      var value = params.get(pair[0]);
-      if (value) { write(pair[1], value); touched = true; }
-    });
-    if (touched) {
-      global.history.replaceState(null, '', global.location.pathname + global.location.search);
-    }
-    return touched;
-  }
-
   /*
-   * Someone with the album already open taps the share link again — from
-   * WhatsApp, from a bookmark, from the gate screen. The browser sees the same
-   * document with a different fragment and does NOT reload, so nothing would
-   * pick the code up. Absorb it here and reload deliberately.
-   */
-  global.addEventListener('hashchange', function () {
-    if (absorbHash()) {
-      config = null;
-      global.location.reload();
-    }
-  });
-
-  PS.config = function () {
-    if (config) return config;
-    absorbHash();
-    var repo = read('repo') || defaults.repo || '';
-    var parts = repo.split('/');
-    config = {
-      owner: parts[0] || '',
-      name: parts[1] || '',
-      repo: repo,
-      branch: read('branch') || defaults.branch || 'main',
-      title: read('title') || defaults.title || 'Fotoalbum',
-      token: read('token')
-    };
-    return config;
-  };
-
-  PS.setToken = function (token) { write('token', token); config = null; };
-  PS.setRepo = function (repo) { write('repo', repo); config = null; };
-  PS.forget = function () {
-    ['repo', 'token', 'branch', 'title'].forEach(function (k) { write(k, ''); });
-    config = null;
-  };
-
-  /*
-   * What the current access code is allowed to do.
+   * The display name on this device.
    *
-   * There is no way to ask GitHub outright: the repository endpoint carries a
-   * `permissions` object, but the docs do not say whether it reflects the
-   * token's access or the account's, and a wrong guess here shows a Löschen
-   * button that cannot work. So the app learns from what actually happened —
-   * a write that succeeded proves "write", a 403 proves "read" — and shows the
-   * button only when it has no evidence against it.
-   *
-   * Keyed by the token, so switching links starts the question over.
+   * The account is the authority — every row records its author server-side —
+   * but the name shown next to a photo is still this, because an account tied
+   * to a face knows the family's spelling and an account without one has only
+   * whatever its owner typed. Kept here so all four pages agree.
    */
-  function abilityKey() {
-    var token = read('token');
-    if (!token) return '';
-    var hash = 0x811c9dc5;
-    for (var i = 0; i < token.length; i++) {
-      hash ^= token.charCodeAt(i);
-      hash = Math.imul(hash, 0x01000193) >>> 0;
-    }
-    return 'can:' + hash.toString(16);
-  }
-
-  PS.ability = function (value) {
-    var key = abilityKey();
-    if (!key) return 'unknown';
-    if (value === undefined) return read(key) || 'unknown';
-    write(key, value);
-    return value;
-  };
-
-  PS.mayWrite = function () {
-    return PS.ability() !== 'read';
-  };
-
   PS.name = function (value) {
     if (value === undefined) return read('name');
     write('name', value);
     return value;
-  };
-
-  /** Accept a full share link, a bare "owner/repo#k=..." or just the token. */
-  PS.applyPastedAccess = function (input) {
-    var text = (input || '').trim();
-    if (!text) return false;
-    var hash = text.indexOf('#');
-    if (hash >= 0) {
-      var params = new URLSearchParams(text.slice(hash + 1));
-      var applied = false;
-      [['r', 'repo'], ['k', 'token'], ['b', 'branch'], ['t', 'title']].forEach(function (pair) {
-        var value = params.get(pair[0]);
-        if (value) { write(pair[1], value); applied = true; }
-      });
-      config = null;
-      return applied;
-    }
-    if (/^(github_pat_|ghp_|gho_|ghs_)/.test(text)) { PS.setToken(text); return true; }
-    if (/^[\w.-]+\/[\w.-]+$/.test(text)) { PS.setRepo(text); return true; }
-    return false;
-  };
-
-  /**
-   * Blob -> base64, which is the only shape the GitHub Contents API accepts.
-   *
-   * Lives here rather than next to the image code because the gallery needs it
-   * too: posting a comment is a file write like any other.
-   */
-  PS.toBase64 = function (blob) {
-    return new Promise(function (resolve, reject) {
-      var reader = new FileReader();
-      reader.onload = function () {
-        var text = String(reader.result);
-        resolve(text.slice(text.indexOf(',') + 1));
-      };
-      reader.onerror = function () { reject(new Error('Datei konnte nicht gelesen werden.')); };
-      reader.readAsDataURL(blob);
-    });
   };
 
   // --- DOM helpers -------------------------------------------------------
@@ -222,59 +96,6 @@
 
   PS.plural = function (n, one, many) {
     return n + ' ' + (n === 1 ? one : many);
-  };
-
-  /**
-   * Gate the page behind an access code. Renders a paste form when we have no
-   * usable repo/token yet and calls `onReady` once we do.
-   */
-  PS.requireAccess = function (mount, onReady) {
-    var cfg = PS.config();
-    // Name the tab before anything else. Someone who has three albums open, or
-    // who bookmarked the bare URL, should not be looking at "Fotoalbum".
-    if (cfg.title) document.title = cfg.title;
-    if (cfg.repo && cfg.token) { onReady(cfg); return; }
-
-    var input = PS.el('input', {
-      type: 'password',
-      class: 'field',
-      autocomplete: 'off',
-      autocapitalize: 'off',
-      spellcheck: 'false',
-      placeholder: 'Zugangs-Link oder Code einfügen'
-    });
-    var hint = PS.el('p', { class: 'gate__hint', text: 'Du hast den Link per WhatsApp bekommen? Einfach hier einfügen.' });
-
-    function submit() {
-      if (!PS.applyPastedAccess(input.value)) {
-        hint.textContent = 'Damit kann ich nichts anfangen — bitte den kompletten Link einfügen.';
-        hint.classList.add('is-error');
-        return;
-      }
-      var next = PS.config();
-      if (!next.repo || !next.token) {
-        hint.textContent = 'Da fehlt noch etwas — bitte den kompletten Link einfügen, nicht nur einen Teil.';
-        hint.classList.add('is-error');
-        return;
-      }
-      mount.innerHTML = '';
-      onReady(next);
-    }
-
-    mount.innerHTML = '';
-    mount.appendChild(PS.el('div', { class: 'gate' }, [
-      PS.el('div', { class: 'gate__icon', text: '🔒' }),
-      PS.el('h1', { class: 'gate__title', text: cfg.title }),
-      PS.el('p', { class: 'gate__lead', text: 'Dieses Album ist privat.' }),
-      input,
-      PS.el('button', { class: 'btn btn--primary', onclick: submit, text: 'Album öffnen' }),
-      hint
-    ]));
-
-    input.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter') submit();
-    });
-    input.focus();
   };
 
   /** "vor 5 Minuten", "gestern, 21:03" — a timestamp people read without doing sums. */

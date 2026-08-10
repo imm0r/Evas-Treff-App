@@ -50,8 +50,15 @@ async function listDir(p) {
 /** Walk one album folder (or the repository root, for the old layout). */
 async function readAlbum(root, slug) {
   const base = slug ? path.join(REPO, 'albums', slug) : REPO;
-  const manifest = await readFile(path.join(base, 'album.json'), 'utf8').catch(() => null);
-  const meta = manifest ? JSON.parse(manifest) : {};
+  // A missing album.json is survivable - the folder name stands in - but it
+  // must not be silent, or the album quietly arrives called "evas-treff".
+  const manifestPath = path.join(base, 'album.json');
+  let meta = {};
+  try {
+    meta = JSON.parse(await readFile(manifestPath, 'utf8'));
+  } catch (error) {
+    console.warn(`  ! ${manifestPath}: ${error.code || error.message} — Titel wird der Ordnername`);
+  }
   const photos = [];
 
   for (const day of (await listDir(path.join(base, 'thumbs'))).sort()) {
@@ -130,10 +137,46 @@ async function rest(pathname, init = {}) {
       ...(init.headers || {})
     }
   });
+
+  /*
+   * Read the body as text first, always.
+   *
+   * `response.json()` on an empty body throws "Unexpected end of JSON input",
+   * which names neither the request nor the status - a migration that dies
+   * after forty photos then tells you nothing about which one. An empty body
+   * is also not necessarily wrong: 204 has none by definition, and an upsert
+   * can legitimately answer without a representation. So: no body means null,
+   * and every failure says what came back.
+   */
+  const text = await response.text();
   if (!response.ok) {
-    throw new Error(`${init.method || 'GET'} ${pathname} → ${response.status}: ${await response.text()}`);
+    throw new Error(`${init.method || 'GET'} ${pathname} → ${response.status}: ${text.slice(0, 300) || '(leere Antwort)'}`);
   }
-  return response.status === 204 ? null : response.json();
+  if (!text.trim()) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`${init.method || 'GET'} ${pathname} → ${response.status}, unlesbare Antwort: ${text.slice(0, 200)}`);
+  }
+}
+
+/**
+ * Write a row and come back holding it.
+ *
+ * The representation an upsert returns is the fast path, not a promise: ask
+ * again when it is missing rather than crashing on `rows[0]`.
+ */
+async function upsert(table, conflict, row, find) {
+  const back = await rest(`/rest/v1/${table}?on_conflict=${conflict}`, {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+    body: JSON.stringify(row)
+  });
+  if (back && back[0]) return back[0];
+
+  const again = await rest(`/rest/v1/${table}?${find}&select=*`);
+  if (again && again[0]) return again[0];
+  throw new Error(`${table}: nach dem Schreiben nicht wiedergefunden (${find})`);
 }
 
 async function upload(bucket, objectPath, file) {
@@ -161,51 +204,71 @@ const albums = slugs.length
   : [await readAlbum(REPO, '')];
 const board = await readBoard();
 
+const groupPhoto = path.join(REPO, 'people', 'photo.jpg');
+const hasGroupPhoto = await exists(groupPhoto);
+
 const photoCount = albums.reduce((n, a) => n + a.photos.length, 0);
 const commentCount = albums.reduce((n, a) => n + a.photos.reduce((m, p) => m + p.comments.length, 0), 0);
 console.log(`Gefunden: ${albums.length} Alben, ${photoCount} Fotos, ${commentCount} Kommentare, ${board.length} Pinnwand-Beiträge`);
 albums.forEach((a) => console.log(`  ${a.slug.padEnd(16)} ${String(a.photos.length).padStart(4)} Fotos  „${a.title}"`));
+console.log(`  Familienfoto: ${hasGroupPhoto ? 'gefunden' : 'FEHLT — ohne es gibt es keine Gesichter'}`);
 
 if (DRY) {
   console.log('\n--dry-run: nichts geschrieben.');
   process.exit(0);
 }
 
+/*
+ * The group photo, before anything else.
+ *
+ * The `people` rows are only names and coordinates; the picture they point at
+ * lives in Storage. Without it PS.data.people() returns null and every face in
+ * the app quietly disappears - the picker, the avatars beside the names, all
+ * of it. Nothing breaks loudly, which is exactly why this is easy to forget:
+ * it was, once, and only signing the path by hand turned it up.
+ */
+if (hasGroupPhoto) {
+  await upload('people', 'photo.jpg', groupPhoto);
+  console.log('\nFamilienfoto hochgeladen.');
+} else {
+  console.log('\nKein people/photo.jpg im Album-Repo - die Gesichter bleiben aus.');
+}
+
 for (const album of albums) {
-  const [row] = await rest('/rest/v1/albums?on_conflict=slug', {
-    method: 'POST',
-    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-    body: JSON.stringify({ slug: album.slug, title: album.title, event_date: album.date })
-  });
+  const row = await upsert('albums', 'slug',
+    { slug: album.slug, title: album.title, event_date: album.date },
+    `slug=eq.${encodeURIComponent(album.slug)}`);
   console.log(`\nAlbum „${album.title}" → ${row.id}`);
 
-  let added = 0, already = 0;
+  // Which hashes are already over there. One query beats guessing from what an
+  // upsert did or did not answer, and it makes the tally at the end true.
+  const before = new Set(((await rest(
+    `/rest/v1/photos?album_id=eq.${row.id}&select=content_hash`)) || [])
+    .map((p) => p.content_hash));
+
+  let added = 0, already = 0, done = 0;
   for (const photo of album.photos) {
     const objectBase = `${album.slug}/${photo.hash}`;
     await upload('photos', `${objectBase}.jpg`, photo.photoFile);
     await upload('photos', `${objectBase}_thumb.jpg`, photo.thumbFile);
 
-    const inserted = await rest('/rest/v1/photos?on_conflict=album_id,content_hash', {
-      method: 'POST',
-      headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
-      body: JSON.stringify({
-        album_id: row.id,
-        storage_path: `${objectBase}.jpg`,
-        thumb_path: `${objectBase}_thumb.jpg`,
-        content_hash: photo.hash,
-        taken_at: photo.takenAt,
-        uploader_name: photo.uploader,
-        bytes: (await stat(photo.photoFile)).size
-      })
-    });
-    const photoId = inserted[0].id;
-    if (inserted[0].created_at) added++; else already++;
+    const inserted = await upsert('photos', 'album_id,content_hash', {
+      album_id: row.id,
+      storage_path: `${objectBase}.jpg`,
+      thumb_path: `${objectBase}_thumb.jpg`,
+      content_hash: photo.hash,
+      taken_at: photo.takenAt,
+      uploader_name: photo.uploader,
+      bytes: (await stat(photo.photoFile)).size
+    }, `album_id=eq.${row.id}&content_hash=eq.${photo.hash}`);
+    const photoId = inserted.id;
+    if (before.has(photo.hash)) already++; else added++;
 
     for (const comment of photo.comments) {
       // Comments carry no hash, so they are matched on photo + author + time.
       const found = await rest(`/rest/v1/comments?photo_id=eq.${photoId}` +
         `&created_at=eq.${encodeURIComponent(comment.at)}&select=id`);
-      if (found.length) continue;
+      if (found && found.length) continue;
       await rest('/rest/v1/comments', {
         method: 'POST',
         body: JSON.stringify({
@@ -214,6 +277,9 @@ for (const album of albums) {
         })
       });
     }
+
+    // Forty photos over a home connection is minutes of silence otherwise.
+    if (++done % 10 === 0) console.log(`  ${done}/${album.photos.length} …`);
   }
   console.log(`  ${added} Fotos übernommen, ${already} waren schon da`);
 }
@@ -221,7 +287,7 @@ for (const album of albums) {
 for (const post of board) {
   const found = await rest(`/rest/v1/board_posts?created_at=eq.${encodeURIComponent(post.at)}` +
     `&author_name=eq.${encodeURIComponent(post.author)}&select=id`);
-  if (found.length) continue;
+  if (found && found.length) continue;
   let imagePath = null;
   if (post.imageFile) {
     imagePath = `board/${post.id}.jpg`;
@@ -236,5 +302,17 @@ for (const post of board) {
   });
 }
 if (board.length) console.log(`\nPinnwand: ${board.length} Beiträge geprüft`);
+
+/*
+ * Everything above arrives with a name and no account, because the old app
+ * never had accounts — and a photo with no `uploader_id` is one its own
+ * uploader cannot delete, since the rule asks for `uploader_id = auth.uid()`.
+ *
+ * A trigger claims those rows the moment somebody ties their account to a
+ * face, which covers everyone who signs in after this runs. This call covers
+ * the ones who already had.
+ */
+await rest('/rest/v1/rpc/claim_all', { method: 'POST', body: '{}' });
+console.log('Alte Fotos und Kommentare den Konten zugeordnet.');
 
 console.log('\nFertig.');

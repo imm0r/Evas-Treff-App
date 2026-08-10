@@ -52,15 +52,29 @@
   };
 
   /**
+   * What `encodeJpeg` will produce, without producing it.
+   *
+   * The photo row records the stored size, and asking for it by decoding the
+   * finished JPEG again would cost a second raster of the same picture.
+   */
+  PS.fitSize = function (decoded, maxEdge) {
+    var scale = Math.min(1, maxEdge / Math.max(decoded.width, decoded.height));
+    return {
+      width: Math.max(1, Math.round(decoded.width * scale)),
+      height: Math.max(1, Math.round(decoded.height * scale))
+    };
+  };
+
+  /**
    * Scale to a long edge of `maxEdge` and encode as JPEG.
    *
    * Halving in steps rather than one big jump: a single drawImage from 8000px
    * to 480px point-samples and turns fine detail into noise.
    */
   PS.encodeJpeg = function (decoded, maxEdge, quality) {
-    var scale = Math.min(1, maxEdge / Math.max(decoded.width, decoded.height));
-    var targetW = Math.max(1, Math.round(decoded.width * scale));
-    var targetH = Math.max(1, Math.round(decoded.height * scale));
+    var fit = PS.fitSize(decoded, maxEdge);
+    var targetW = fit.width;
+    var targetH = fit.height;
 
     var startEdge = Math.min(Math.max(decoded.width, decoded.height), MAX_RASTER_EDGE);
     var startScale = startEdge / Math.max(decoded.width, decoded.height);
