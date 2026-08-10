@@ -283,6 +283,11 @@ img { display: block; max-width: 100%; }
   pointer-events: none;
 }
 .tile.is-loaded:hover .tile__by { opacity: 1; }
+/* Am Gesicht vorbei, nicht darunter. Der Kopf sitzt links unten in derselben
+   Ecke; ohne diesen Einzug schreibt der Name direkt hinter ihm los und
+   verschwindet genau hinter dem, was ihn erklären soll. Das Untenmaß setzt die
+   Zeile auf die Höhe der Kopfmitte. */
+.tile--face .tile__by { padding: 14px 6px 10px 34px; }
 
 /* --- lightbox ------------------------------------------------------------ */
 
