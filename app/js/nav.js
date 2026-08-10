@@ -12,6 +12,7 @@
 
   var SECTIONS = [
     { page: 'index.html', label: 'Alben', icon: '📷' },
+    { page: 'dates.html', label: 'Termine', icon: '📅' },
     { page: 'board.html', label: 'Pinnwand', icon: '📌' }
   ];
 

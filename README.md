@@ -1,7 +1,7 @@
 # Eva's Treff
 
-Der Familien-Hub: Fotoalben, Pinnwand, Gästeliste. Statische Seite auf GitHub
-Pages, Daten in Supabase.
+Der Familien-Hub: Fotoalben, Termine, Pinnwand, Gästeliste. Statische Seite auf
+GitHub Pages, Daten in Supabase.
 
 **Live:** https://imm0r.github.io/Evas-Treff-App/
 
@@ -17,12 +17,13 @@ tools/                      Testsuiten, Migration, lokaler Server
 ```
 
 Bereiche: **Alben** (`index.html`), **Hochladen** (`upload.html`),
-**Pinnwand** (`board.html`) und **Familie** (`admin.html`, nur für Admins).
+**Termine** (`dates.html`), **Pinnwand** (`board.html`) und **Familie**
+(`admin.html`, nur für Admins — dort stehen auch die Geburtstage).
 
 ---
 
-A family hub for a couple of dozen relatives: photo albums, a pinboard, and the
-guest list that decides who may see any of it. A static page on GitHub Pages in
+A family hub for a couple of dozen relatives: photo albums, dates and birthdays,
+a pinboard, and the guest list that decides who may see any of it. A static page on GitHub Pages in
 front of a Supabase project.
 
 ```
@@ -36,7 +37,7 @@ front of a Supabase project.
 
 ## Why it is built this way
 
-**No backend of our own, and no build step.** Four HTML files, a handful of
+**No backend of our own, and no build step.** Five HTML files, a handful of
 scripts, one stylesheet. Supabase is reached over plain HTTP — PostgREST,
 Storage and Auth are all just endpoints — rather than through the client
 library, so there is nothing to compile and the Content-Security-Policy names
@@ -78,6 +79,24 @@ home address.
 covers a whole album, however many photos are in it; after that the browser
 fetches and caches them like any other image. That is one request per screen
 instead of one per tile.
+
+**Dates are a list, not a month grid.** A calendar grid on a phone is mostly
+empty boxes, and the question is never "what was on the 14th" but "what is
+next". So: one list, nearest first, and anything past today drops off — in the
+query, not in the browser. Birthdays sit in that same list although they come
+from another table and belong to nobody; on screen they are the same thing, a
+date to look forward to.
+
+A birthday is a day and a month, and the **year is optional**, because for the
+older relatives nobody remembers it. With a year the card says "wird 78";
+without one it just says whose day it is. An invented year would show up later
+as an age, which is worse than no age at all. The database insists on the pair
+— a day without a month is not a date — and the page says so first, in German,
+before sending anything.
+
+Replies are one row per person per event, upserted, so changing your mind
+replaces the earlier answer instead of stacking up. The card shows the faces of
+everyone who said yes, from the same family photo the rest of the app uses.
 
 **Photos are named by their content.** `albums/<slug>/<hash>.jpg`, with a
 `_thumb.jpg` beside it. Re-uploading the same file lands on the same name and
@@ -187,7 +206,9 @@ Two suites, both of which check the code against something other than itself:
   the same number of signing calls as two, a 12 MP photo actually arriving as a
   2560px JPEG, a HEIC arriving as one at all, uploading the same file twice
   being a no-op, the delete button appearing only on your own things, the guest
-  list refusing a non-admin, and a signed-out page requesting nothing at all.
+  list refusing a non-admin, the calendar asking only for dates from today
+  onwards and sorting birthdays in among the events, an empty time arriving as
+  `null` rather than `00:00`, and a signed-out page requesting nothing at all.
 
 `SHOTS=<dir> node tools/e2e-supabase.mjs` also writes a picture of every screen.
 Assertions keep missing what one look catches immediately, and screenshots have

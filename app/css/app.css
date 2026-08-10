@@ -422,6 +422,54 @@ img { display: block; max-width: 100%; }
   background: var(--surface-2);
 }
 
+/* --- dates and birthdays -------------------------------------------------- */
+
+.dates { max-width: 620px; margin: 0 auto; padding: 0 var(--pad); }
+
+.date {
+  position: relative;
+  margin-top: 12px;
+  padding: 12px 34px 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.date--face, .date--birthday { padding-left: 64px; }
+.date--face .avatar, .date__cake { position: absolute; left: 14px; top: 14px; }
+.date__cake { font-size: 30px; line-height: 1; }
+
+.date__when { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.date__day { font-size: 12px; color: var(--ink-dim); }
+/* The one thing worth a colour here: how soon it is. */
+.date__soon {
+  font-size: 11px; padding: 1px 8px; border-radius: 999px;
+  background: var(--accent); color: var(--accent-ink); font-weight: 600;
+}
+
+.date__title { display: block; margin-top: 3px; font-size: 17px; }
+.date__host, .date__place, .date__note {
+  margin: 4px 0 0; font-size: 13px; color: var(--ink-dim); line-height: 1.5;
+}
+.date__note { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.date__answers { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+
+/* Who is coming, as faces where there are faces. The line is separated from
+   the buttons above it, because answering and reading who answered are two
+   different things happening in the same card. */
+.date__guests {
+  display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--line);
+}
+.date__guest, .date__tally, .date__nobody { font-size: 12px; color: var(--ink-dim); }
+.date__nobody { font-style: italic; }
+.date__tally { margin-left: 2px; }
+
+/* Date and time in the new-event dialog: side by side, because they are one
+   answer to one question and stacking them makes the dialog scroll. */
+.date__fields { display: flex; gap: 8px; }
+.date__fields .field { flex: 1; min-width: 0; }
+
 /* --- the guest list ------------------------------------------------------- */
 
 .guests { max-width: 620px; margin: 0 auto; padding: 0 var(--pad); }
@@ -450,6 +498,14 @@ img { display: block; max-width: 100%; }
   font-size: 11px; padding: 2px 8px; border-radius: 999px;
   background: var(--surface-2); color: var(--ink-dim);
 }
+
+.guest--birthday { flex-wrap: wrap; }
+/* Drei Zahlenfelder, die sich den Platz teilen: auf einem schmalen Telefon
+   passt keine feste Breite, ohne dass die Beschriftung abgeschnitten wird. */
+.birthday__fields { display: flex; gap: 6px; flex: 1 1 100%; min-width: 0; }
+.birthday__part { flex: 1 1 0; min-width: 0; margin: 0; text-align: center; }
+/* A save nobody pressed needs to be visible, or it did not happen. */
+.guest.is-saved { border-color: var(--ok); transition: border-color 200ms; }
 
 .checkrow { display: flex; align-items: center; gap: 8px; margin-top: 10px; font-size: 14px; }
 .checkrow .check { width: 18px; height: 18px; accent-color: var(--accent); }

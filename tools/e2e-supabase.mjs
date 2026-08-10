@@ -106,6 +106,7 @@ function makeBackend() {
   return {
     otpRequests: [], inserts: [], deletes: [], uploads: [], signCalls: 0,
     albums: [], photos: [], comments: [], people: [], board: [], invites: [],
+    events: [], queries: [],
     profile: { id: 'user-1', email: 'ich@example.de', is_admin: true, person_id: 'p1', people: { name: 'Maria' } }
   };
 }
@@ -181,14 +182,50 @@ async function stub(page, back) {
       back.board.unshift(saved);
       return json(201, [saved]);
     }
-    if (p === '/rest/v1/people') {
+    if (p === '/rest/v1/events' && request.method() === 'GET') {
+      // Womit gefragt wurde, ist hier die eigentliche Prüfung: der Kalender
+      // soll Vergangenes gar nicht erst holen.
+      back.queries.push(url.search);
+      const from = (url.searchParams.get('starts_on') || '').replace('gte.', '');
+      return json(200, back.events.filter((e) => !from || e.starts_on >= from));
+    }
+    if (p === '/rest/v1/events' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'events', row });
+      const saved = Object.assign({ id: 'ev-neu', event_replies: [], profiles: null }, row);
+      back.events.push(saved);
+      return json(201, [saved]);
+    }
+    if (p === '/rest/v1/event_replies' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'event_replies', row, query: url.search });
+      return json(201, [row]);
+    }
+    // Auf die Methode prüfen, sonst schluckt der Lese-Zweig das PATCH: das
+    // trägt ebenfalls `name=eq.…`, bekäme brav eine 200, und der Test sähe ein
+    // Speichern, das nie stattgefunden hat.
+    if (p === '/rest/v1/people' && request.method() === 'GET') {
       // The guest list looks a person up by name before it stores an invite.
       const wanted = (url.searchParams.get('name') || '').replace('eq.', '');
       if (wanted) {
         const hit = back.people.find((x) => x.name === decodeURIComponent(wanted));
         return json(200, hit ? [{ id: 'person-' + hit.name }] : []);
       }
+      // Dieselbe Tabelle, zwei Fragen: der Kalender will nur die, bei denen ein
+      // Geburtstag steht, die Familie-Seite alle — sie ist ja der Ort, an dem
+      // man ihn einträgt. Der Filter unterscheidet sie, nicht das select.
+      if (url.searchParams.get('birth_day') === 'not.is.null') {
+        return json(200, back.people.filter((x) => x.birth_day));
+      }
       return json(200, back.people);
+    }
+    if (p === '/rest/v1/people' && request.method() === 'PATCH') {
+      const row = JSON.parse(request.postData());
+      const who = decodeURIComponent((url.searchParams.get('name') || '').replace('eq.', ''));
+      back.inserts.push({ table: 'people.patch', row: Object.assign({ name: who }, row) });
+      const person = back.people.find((x) => x.name === who);
+      if (person) Object.assign(person, row);
+      return json(204, {});
     }
     if (p === '/rest/v1/profiles') return json(200, [back.profile]);
 
@@ -570,6 +607,110 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await context.close();
 }
 
+// --- 4b. Termine und Geburtstage -------------------------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  images.set('photo.jpg', await makeJpeg(scratch, 800, 500, 40, 'Familie'));
+  await scratch.close();
+
+  // Relativ zu heute, nicht auf feste Daten: ein Test, der im September
+  // durchfällt, weil das Datum vorbei ist, hat nichts gefunden.
+  const day = (offset) => {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  };
+  const inFourDays = new Date();
+  inFourDays.setDate(inFourDays.getDate() + 4);
+
+  back.people = [
+    { name: 'Maria', face_x: 0.78, face_y: 0.39, aliases: [] },
+    { name: 'Ines', face_x: 0.13, face_y: 0.39, aliases: [],
+      birth_day: inFourDays.getDate(), birth_month: inFourDays.getMonth() + 1, birth_year: 1958 }
+  ];
+  back.events = [
+    { id: 'ev-grillen', title: 'Grillen im Garten', starts_on: day(9), starts_at: null,
+      place: null, note: null, created_by: 'user-1', profiles: { people: { name: 'Maria' } },
+      event_replies: [] },
+    { id: 'ev-kaffee', title: 'Kaffee bei Oma', starts_on: day(2), starts_at: '15:00:00',
+      place: 'Bei Eva', note: 'Kuchen bringt Maria mit', created_by: 'user-9',
+      profiles: { people: { name: 'Ines' } },
+      event_replies: [{ profile_id: 'user-9', answer: 'ja', profiles: { people: { name: 'Ines' } } }] },
+    // Vergangenes darf gar nicht erst über die Leitung kommen.
+    { id: 'ev-alt', title: 'Letztes Jahr', starts_on: day(-30), starts_at: null,
+      place: null, note: null, created_by: 'user-1', profiles: null, event_replies: [] }
+  ];
+
+  await page.goto(origin + '/dates.html' + SESSION);
+  await page.waitForSelector('.date');
+
+  check('termine: fragt nur ab heute ab',
+    back.queries.some((q) => q.includes('starts_on=gte.' + day(0))), back.queries.join('\n'));
+  check('termine: der alte Termin taucht nicht auf',
+    !(await page.textContent('.dates')).includes('Letztes Jahr'));
+  check('termine: Termin und Geburtstag in einer Liste',
+    (await page.locator('.date').count()) === 3 &&
+    (await page.locator('.date--birthday').count()) === 1);
+
+  // Die Reihenfolge ist der ganze Zweck der Seite.
+  const titles = await page.locator('.date__title').allTextContents();
+  check('termine: das Nächste zuerst',
+    titles[0] === 'Kaffee bei Oma' && titles[1] === 'Ines hat Geburtstag' &&
+    titles[2] === 'Grillen im Garten', JSON.stringify(titles));
+
+  check('termine: bei fremden Terminen steht dran, von wem sie sind',
+    (await page.locator('.date__host').count()) === 1 &&
+    (await page.textContent('.date__host')).includes('Ines'));
+  check('termine: wie bald es ist, steht dran',
+    (await page.locator('.date').nth(0).locator('.date__soon').textContent()) === 'übermorgen');
+  // Ohne Jahr gäbe es kein Alter; mit Jahr muss es stimmen.
+  check('geburtstage: das Alter nur, wenn das Jahr bekannt ist',
+    (await page.locator('.date--birthday .date__note').textContent())
+      === 'wird ' + (inFourDays.getFullYear() - 1958));
+
+  await page.locator('.date').nth(0).locator('.chip').nth(0).click();
+  await page.waitForFunction(() => document.querySelectorAll('.chip.is-active').length === 1);
+  const reply = back.inserts.find((i) => i.table === 'event_replies');
+  check('termine: die Zusage trägt das eigene Konto',
+    reply.row.event_id === 'ev-kaffee' && reply.row.profile_id === 'user-1' &&
+    reply.row.answer === 'ja' && reply.query.includes('on_conflict=event_id,profile_id'),
+    JSON.stringify(reply));
+  check('termine: die Antwort steht sofort im Bild, ohne Neuladen',
+    (await page.locator('.date').nth(0).locator('.date__tally').textContent()).includes('2 Zusagen'));
+
+  // Ein fremder Termin: löschen darf ihn hier nur, weil dieses Konto Admin ist.
+  check('termine: Admins dürfen auch fremde Termine wegräumen',
+    (await page.locator('.date .comment__remove').count()) === 2);
+
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Spaziergang');
+  await page.fill('.confirm input[type=date]', day(20));
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForFunction(() => !!document.querySelector('.confirm.is-hidden'));
+  const event = back.inserts.find((i) => i.table === 'events').row;
+  check('termine: neuer Termin mit eigenem Konto als Urheber',
+    event.title === 'Spaziergang' && event.starts_on === day(20) && event.created_by === 'user-1',
+    JSON.stringify(event));
+  // Die meisten Familientermine haben keine Uhrzeit, und "00:00" wäre dafür
+  // die falsche Antwort — das steht so auch in der Migration.
+  check('termine: keine Uhrzeit heißt null, nicht 00:00', event.starts_at === null,
+    JSON.stringify(event.starts_at));
+
+  await shot(page, '5-termine');
+  check('termine: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
 // --- 5. die Gästeliste -----------------------------------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
@@ -598,7 +739,10 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
 
   await page.goto(origin + '/admin.html' + SESSION);
   await page.waitForSelector('.guest');
-  check('gästeliste: zeigt alle Eingeladenen', (await page.locator('.guest').count()) === 2);
+  // Die Geburtstagszeilen darunter sind dieselbe Zeilenform und tragen daher
+  // auch `.guest` — beim Zählen der Eingeladenen müssen sie draußen bleiben.
+  const invited = page.locator('.guest:not(.guest--birthday)');
+  check('gästeliste: zeigt alle Eingeladenen', (await invited.count()) === 2);
   check('gästeliste: sagt, wer schon da war',
     (await page.locator('.guest__state.is-here').count()) === 1);
   // Kicking yourself out of your own guest list is the one move that cannot be
@@ -606,18 +750,50 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   check('gästeliste: die eigene Einladung lässt sich nicht zurückziehen',
     (await page.locator('.comment__remove').count()) === 1);
   check('gästeliste: Gesichter aus dem Familienfoto',
-    (await page.locator('.guest .avatar').count()) === 2);
+    (await invited.locator('.avatar').count()) === 2);
 
   await page.fill('.compose input[type=email]', 'lu@example.de');
   await page.selectOption('.compose select', 'Ines');
   await page.click('.compose__actions .btn--primary');
-  await page.waitForFunction(() => document.querySelectorAll('.guest').length === 3);
+  await page.waitForFunction(
+    () => document.querySelectorAll('.guest:not(.guest--birthday)').length === 3);
   const written = back.inserts.find((i) => i.table === 'invites').row;
   check('gästeliste: trägt die Adresse mit dem gewählten Gesicht ein',
     written.email === 'lu@example.de' && written.person_id === 'person-Ines' && written.is_admin === false,
     JSON.stringify(written));
 
-  await shot(page, '5-gaesteliste');
+  // Geburtstage stehen auf derselben Seite, weil nur Admins `people` ändern
+  // dürfen. Elf Zeilen einmal ausfüllen — ohne Dialog, ohne Speichern-Knopf.
+  check('geburtstage: eine Zeile pro Person auf dem Familienfoto',
+    (await page.locator('.guest--birthday').count()) === 2);
+  await page.locator('.guest--birthday').nth(1).locator('.birthday__part').nth(0).fill('3');
+  await page.locator('.guest--birthday').nth(1).locator('.birthday__part').nth(1).fill('5');
+  await page.locator('.guest--birthday').nth(1).locator('.birthday__year').fill('1958');
+  await page.locator('.guest--birthday').nth(1).locator('.birthday__year').blur();
+  await page.waitForFunction(() => document.querySelectorAll('.guest.is-saved').length > 0);
+  const saved = back.inserts.filter((i) => i.table === 'people.patch').pop().row;
+  check('geburtstage: werden an der Person gespeichert',
+    saved.name === 'Ines' && saved.birth_day === 3 && saved.birth_month === 5 &&
+    saved.birth_year === 1958, JSON.stringify(saved));
+
+  // Halbes Datum gar nicht erst abschicken: der Server lehnt es ohnehin ab,
+  // aber die Meldung soll früher und auf Deutsch kommen.
+  const before = back.inserts.filter((i) => i.table === 'people.patch').length;
+  // Meldungen stapeln sich; die vom Einladen steht noch da. Also auf eine
+  // NEUE warten und die letzte lesen, sonst prüft der Test die alte.
+  const toasts = await page.locator('.toast').count();
+  await page.locator('.guest--birthday').nth(0).locator('.birthday__part').nth(0).fill('7');
+  await page.locator('.guest--birthday').nth(0).locator('.birthday__part').nth(0).blur();
+  await page.waitForFunction((had) => document.querySelectorAll('.toast').length > had, toasts);
+  const complaint = await page.locator('.toast').last().textContent();
+  check('geburtstage: Tag ohne Monat wird gar nicht erst geschickt',
+    back.inserts.filter((i) => i.table === 'people.patch').length === before &&
+    complaint.includes('gehören zusammen'), complaint);
+
+  // Die Meldungen räumen sich nach ein paar Sekunden selbst weg; für das Bild
+  // warten wir das ab, sonst liegen drei Sprechblasen über der Liste.
+  await page.waitForFunction(() => document.querySelectorAll('.toast').length === 0);
+  await shot(page, '6-gaesteliste');
   check('gästeliste: keine Fehler', errors.length === 0, errors.join('\n'));
   await context.close();
 }
@@ -655,7 +831,7 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     if (!auth.includes('Bearer ')) reached.push(new URL(route.request().url()).pathname);
     return route.fulfill({ status: 401, headers: { 'Content-Type': 'application/json' }, body: '{}' });
   });
-  for (const where of ['/index.html', '/upload.html', '/board.html', '/admin.html']) {
+  for (const where of ['/index.html', '/upload.html', '/board.html', '/admin.html', '/dates.html']) {
     await page.goto(origin + where);
     await page.waitForSelector('.gate');
     await page.waitForTimeout(300);
