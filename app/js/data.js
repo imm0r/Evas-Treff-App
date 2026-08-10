@@ -352,14 +352,16 @@
   data.calendar = async function () {
     var today = todayISO();
     var rows = await PS.sb.select('events',
-      'select=id,title,starts_on,starts_at,place,note,created_by,' +
+      // `over_on` statt `starts_on`: ein mehrtägiger Termin soll am dritten Tag
+      // noch dastehen und nicht verschwinden, weil sein ANFANG vorbei ist.
+      'select=id,title,starts_on,ends_on,starts_at,place,note,created_by,' +
       // Den Fremdschlüssel benennen, sonst weiß PostgREST nicht, welchen Weg es
       // nehmen soll: `events.created_by` zeigt auf `profiles`, und über
       // `event_replies` sind dieselben zwei Tabellen ein zweites Mal
       // verbunden. Ohne `!events_created_by_fkey` antwortet es mit PGRST201.
       'profiles!events_created_by_fkey(people(name)),' +
       'event_replies(profile_id,answer,profiles(people(name)))' +
-      '&starts_on=gte.' + today + '&order=starts_on.asc');
+      '&over_on=gte.' + today + '&order=starts_on.asc');
 
     var items = rows.map(function (row) {
       return {
@@ -367,6 +369,7 @@
         id: row.id,
         title: row.title,
         on: row.starts_on,
+        until: row.ends_on || null,
         // Postgres hands back "15:00:00"; the seconds are never interesting.
         at: row.starts_at ? row.starts_at.slice(0, 5) : null,
         place: row.place || '',
@@ -411,6 +414,7 @@
     var rows = await PS.sb.insert('events', {
       title: event.title,
       starts_on: event.on,
+      ends_on: event.until || null,
       starts_at: event.at || null,
       place: event.place || null,
       note: event.note || null,

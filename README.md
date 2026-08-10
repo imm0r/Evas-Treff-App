@@ -115,6 +115,26 @@ query, not in the browser. Birthdays sit in that same list although they come
 from another table and belong to nobody; on screen they are the same thing, a
 date to look forward to.
 
+**A date can last several days**, because "Jahrestreffen 2027: 5.–10.8." is
+exactly the kind of thing entered a year in advance. `ends_on` is a second
+column rather than a length in days: "until the 10th" is what people say and
+write down, while "six days" has to be worked out once and again on every edit.
+NULL means one day, so nothing already entered had to have an ending invented
+for it.
+
+The interesting part is the query. "What is not over yet" now has to keep a date
+whose *start* is behind us — the family gathering must still be there on its
+third day. Written across two columns that is
+`starts_on >= today or ends_on >= today`, and there is something wrong with it:
+for a one-day date `ends_on` is NULL, so the second half is NULL and the whole
+expression is NULL rather than false. In a `WHERE` the row still drops out, so
+the result is right — but only because three-valued logic happens to point the
+same way, and a later `NOT` would flip it silently. That was measured against
+this database, not assumed: the truth table for all seven cases came back with
+NULL for "one-day, past". So the answer is computed once and stored —
+`over_on = coalesce(ends_on, starts_on)` — and the filter reads like the
+question it asks.
+
 A birthday is a day and a month, and the **year is optional**, because for the
 older relatives nobody remembers it. With a year the card says "wird 78";
 without one it just says whose day it is. An invented year would show up later
@@ -236,7 +256,8 @@ Three checks, all of which measure the code against something other than itself:
   being a no-op, the delete button appearing only on your own things, the guest
   list refusing a non-admin, the calendar asking only for dates from today
   onwards and sorting birthdays in among the events, an empty time arriving as
-  `null` rather than `00:00`, a single album still reaching the shelf so a
+  `null` rather than `00:00`, a date that has started still being listed while
+  one that has ended is not, a single album still reaching the shelf so a
   second one can be created, a move sending `album_id` and nothing else, the
   unread mark appearing only on the picture that has one and clearing when the
   thread is opened, and a signed-out page requesting nothing at all.
