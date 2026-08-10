@@ -266,7 +266,12 @@
     var today = todayISO();
     var rows = await PS.sb.select('events',
       'select=id,title,starts_on,starts_at,place,note,created_by,' +
-      'profiles(people(name)),event_replies(profile_id,answer,profiles(people(name)))' +
+      // Den Fremdschlüssel benennen, sonst weiß PostgREST nicht, welchen Weg es
+      // nehmen soll: `events.created_by` zeigt auf `profiles`, und über
+      // `event_replies` sind dieselben zwei Tabellen ein zweites Mal
+      // verbunden. Ohne `!events_created_by_fkey` antwortet es mit PGRST201.
+      'profiles!events_created_by_fkey(people(name)),' +
+      'event_replies(profile_id,answer,profiles(people(name)))' +
       '&starts_on=gte.' + today + '&order=starts_on.asc');
 
     var items = rows.map(function (row) {

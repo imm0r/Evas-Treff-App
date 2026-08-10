@@ -4,7 +4,8 @@
   "description": "Test harness for the family hub. The app itself ships no dependencies.",
   "scripts": {
     "test": "node tools/exif-test.mjs && node tools/e2e-supabase.mjs",
-    "serve": "node tools/serve.mjs"
+    "serve": "node tools/serve.mjs",
+    "check:api": "node tools/query-check.mjs"
   },
   "devDependencies": {
     "playwright": "^1.56.1"
