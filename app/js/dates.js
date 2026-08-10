@@ -99,6 +99,10 @@
     var now = new Date();
     var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     var days = Math.round((then - today) / 86400000);
+    // Angefangen und noch nicht vorbei — das gibt es erst, seit ein Termin
+    // mehrere Tage dauern kann. Ohne diesen Fall stünde am dritten Tag des
+    // Familientreffens nichts oder „vor 2 Tagen" dran.
+    if (days < 0) return 'läuft gerade';
     if (days === 0) return 'heute';
     if (days === 1) return 'morgen';
     if (days === 2) return 'übermorgen';
@@ -122,12 +126,14 @@
   }
 
   function dateLine(item) {
-    var soon = howFar(item.on);
-    var parts = [PS.formatDay(item.on)];
-    if (item.at) parts.push(item.at + ' Uhr');
+    var parts = [PS.formatRange(item.on, item.until)];
+    // Die Uhrzeit gehört zu einem Tag. Bei „5. bis 10. August" hieße „15:00
+    // Uhr" wahlweise am ersten Tag, jeden Tag oder gar nichts — also weglassen.
+    if (item.at && !item.until) parts.push(item.at + ' Uhr');
     var line = el('div', { class: 'date__when' }, [
       el('span', { class: 'date__day', text: parts.join(' · ') })
     ]);
+    var soon = howFar(item.on);
     if (soon) line.appendChild(el('span', { class: 'date__soon', text: soon }));
     return line;
   }
@@ -254,6 +260,7 @@
   function buildForm() {
     nodes.title = el('input', { class: 'field', type: 'text', maxlength: '120', placeholder: 'Worum geht es?' });
     nodes.on = el('input', { class: 'field', type: 'date' });
+    nodes.until = el('input', { class: 'field', type: 'date' });
     nodes.at = el('input', { class: 'field', type: 'time' });
     nodes.place = el('input', { class: 'field', type: 'text', maxlength: '200', placeholder: 'Wo? (optional)' });
     nodes.note = el('textarea', { class: 'field', rows: '3', maxlength: '2000', placeholder: 'Noch etwas dazu? (optional)' });
@@ -265,6 +272,8 @@
         nodes.title,
         el('div', { class: 'date__fields' }, [nodes.on, nodes.at]),
         el('p', { class: 'hint', text: 'Uhrzeit leer lassen heißt: den ganzen Tag.' }),
+        el('label', { class: 'label', text: 'Geht über mehrere Tage? Dann bis:' }),
+        nodes.until,
         nodes.place,
         nodes.note,
         el('div', { class: 'confirm__actions' }, [
@@ -291,6 +300,12 @@
     var title = nodes.title.value.trim();
     if (!title) { nodes.title.focus(); PS.toast('Der Termin braucht einen Namen.'); return; }
     if (!nodes.on.value) { nodes.on.focus(); PS.toast('Und ein Datum.'); return; }
+    // Die Datenbank lehnt es ohnehin ab; hier steht es früher und auf Deutsch.
+    if (nodes.until.value && nodes.until.value < nodes.on.value) {
+      nodes.until.focus();
+      PS.toast('Das Ende liegt vor dem Anfang.');
+      return;
+    }
 
     nodes.save.disabled = true;
     nodes.save.textContent = 'Wird eingetragen …';
@@ -298,6 +313,9 @@
       await PS.data.createEvent({
         title: title,
         on: nodes.on.value,
+        // Ein „bis" am selben Tag ist kein Zeitraum, sondern derselbe Tag.
+        until: (nodes.until.value && nodes.until.value !== nodes.on.value)
+          ? nodes.until.value : null,
         at: nodes.at.value || null,
         place: nodes.place.value.trim(),
         note: nodes.note.value.trim()
@@ -308,7 +326,8 @@
       nodes.save.textContent = 'Eintragen';
       return;
     }
-    [nodes.title, nodes.on, nodes.at, nodes.place, nodes.note].forEach(function (f) { f.value = ''; });
+    [nodes.title, nodes.on, nodes.until, nodes.at, nodes.place, nodes.note]
+      .forEach(function (f) { f.value = ''; });
     nodes.save.disabled = false;
     nodes.save.textContent = 'Eintragen';
     closeForm();

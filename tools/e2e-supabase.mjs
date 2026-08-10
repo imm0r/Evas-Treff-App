@@ -237,8 +237,10 @@ async function stub(page, back) {
       // Womit gefragt wurde, ist hier die eigentliche Prüfung: der Kalender
       // soll Vergangenes gar nicht erst holen.
       back.queries.push(url.search);
-      const from = (url.searchParams.get('starts_on') || '').replace('gte.', '');
-      return json(200, back.events.filter((e) => !from || e.starts_on >= from));
+      // Genau wie die generierte Spalte in Postgres: coalesce(ends_on, starts_on).
+      const from = (url.searchParams.get('over_on') || '').replace('gte.', '');
+      return json(200, back.events.filter((e) =>
+        !from || (e.ends_on || e.starts_on) >= from));
     }
     if (p === '/rest/v1/events' && request.method() === 'POST') {
       const row = JSON.parse(request.postData());
@@ -804,37 +806,64 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
       event_replies: [{ profile_id: 'user-9', answer: 'ja', profiles: { people: { name: 'Ines' } } }] },
     // Vergangenes darf gar nicht erst über die Leitung kommen.
     { id: 'ev-alt', title: 'Letztes Jahr', starts_on: day(-30), starts_at: null,
-      place: null, note: null, created_by: 'user-1', profiles: null, event_replies: [] }
+      place: null, note: null, created_by: 'user-1', profiles: null, event_replies: [] },
+    // Angefangen, aber noch nicht vorbei: genau der Fall, den es vor `ends_on`
+    // nicht gab und der sonst am zweiten Tag aus dem Kalender fällt.
+    { id: 'ev-treffen', title: 'Jahrestreffen', starts_on: day(-1), ends_on: day(3),
+      starts_at: null, place: null, note: null, created_by: 'user-1',
+      profiles: null, event_replies: [] },
+    // Mehrtägig und ganz vorbei — der muss trotzdem wegbleiben.
+    { id: 'ev-weg', title: 'Voriges Treffen', starts_on: day(-20), ends_on: day(-15),
+      starts_at: null, place: null, note: null, created_by: 'user-1',
+      profiles: null, event_replies: [] }
   ];
 
   await page.goto(origin + '/dates.html' + SESSION);
   await page.waitForSelector('.date');
 
-  check('termine: fragt nur ab heute ab',
-    back.queries.some((q) => q.includes('starts_on=gte.' + day(0))), back.queries.join('\n'));
+  check('termine: fragt nach dem Ende, nicht nach dem Anfang',
+    back.queries.some((q) => q.includes('over_on=gte.' + day(0))), back.queries.join('\n'));
   check('termine: der alte Termin taucht nicht auf',
     !(await page.textContent('.dates')).includes('Letztes Jahr'));
+
+  // Der Kern von „mehrtägig": angefangen zählt nicht als vorbei.
+  const sichtbar = await page.textContent('.dates');
+  check('mehrtägig: ein laufender Termin bleibt stehen, obwohl er begonnen hat',
+    sichtbar.includes('Jahrestreffen'));
+  check('mehrtägig: ein abgelaufener Zeitraum bleibt trotzdem weg',
+    !sichtbar.includes('Voriges Treffen'));
+  check('mehrtägig: und trägt den Zeitraum, nicht nur den ersten Tag',
+    /\d+\. – /.test(await page.locator('.date').nth(0).locator('.date__day').textContent()),
+    await page.locator('.date').nth(0).locator('.date__day').textContent());
+  check('mehrtägig: „läuft gerade" statt eines Abstands in die Vergangenheit',
+    (await page.locator('.date').nth(0).locator('.date__soon').textContent()) === 'läuft gerade');
+
   check('termine: Termin und Geburtstag in einer Liste',
-    (await page.locator('.date').count()) === 3 &&
+    (await page.locator('.date').count()) === 4 &&
     (await page.locator('.date--birthday').count()) === 1);
 
   // Die Reihenfolge ist der ganze Zweck der Seite.
   const titles = await page.locator('.date__title').allTextContents();
   check('termine: das Nächste zuerst',
-    titles[0] === 'Kaffee bei Oma' && titles[1] === 'Ines hat Geburtstag' &&
-    titles[2] === 'Grillen im Garten', JSON.stringify(titles));
+    titles.join(' | ') ===
+    'Jahrestreffen | Kaffee bei Oma | Ines hat Geburtstag | Grillen im Garten',
+    JSON.stringify(titles));
+
+  // Ab hier auf die Karte zeigen, nicht auf ihre Position: sonst verschiebt
+  // jeder neue Beispieltermin sämtliche Prüfungen darunter.
+  const kaffee = page.locator('.date', { hasText: 'Kaffee bei Oma' });
 
   check('termine: bei fremden Terminen steht dran, von wem sie sind',
     (await page.locator('.date__host').count()) === 1 &&
     (await page.textContent('.date__host')).includes('Ines'));
   check('termine: wie bald es ist, steht dran',
-    (await page.locator('.date').nth(0).locator('.date__soon').textContent()) === 'übermorgen');
+    (await kaffee.locator('.date__soon').textContent()) === 'übermorgen');
   // Ohne Jahr gäbe es kein Alter; mit Jahr muss es stimmen.
   check('geburtstage: das Alter nur, wenn das Jahr bekannt ist',
     (await page.locator('.date--birthday .date__note').textContent())
       === 'wird ' + (inFourDays.getFullYear() - 1958));
 
-  await page.locator('.date').nth(0).locator('.chip').nth(0).click();
+  await kaffee.locator('.chip').nth(0).click();
   await page.waitForFunction(() => document.querySelectorAll('.chip.is-active').length === 1);
   const reply = back.inserts.find((i) => i.table === 'event_replies');
   check('termine: die Zusage trägt das eigene Konto',
@@ -842,15 +871,18 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     reply.row.answer === 'ja' && reply.query.includes('on_conflict=event_id,profile_id'),
     JSON.stringify(reply));
   check('termine: die Antwort steht sofort im Bild, ohne Neuladen',
-    (await page.locator('.date').nth(0).locator('.date__tally').textContent()).includes('2 Zusagen'));
+    (await kaffee.locator('.date__tally').textContent()).includes('2 Zusagen'));
 
   // Ein fremder Termin: löschen darf ihn hier nur, weil dieses Konto Admin ist.
+  // Drei Termine, einer davon fremd (Kaffee, von user-9) — und auch der trägt
+  // ein Kreuz, weil dieses Konto Admin ist.
   check('termine: Admins dürfen auch fremde Termine wegräumen',
-    (await page.locator('.date .comment__remove').count()) === 2);
+    (await page.locator('.date .comment__remove').count()) === 3 &&
+    (await kaffee.locator('.comment__remove').count()) === 1);
 
   await page.click('.topbar__actions .btn--primary');
   await page.fill('.confirm input[type=text]', 'Spaziergang');
-  await page.fill('.confirm input[type=date]', day(20));
+  await page.locator('.confirm input[type=date]').nth(0).fill(day(20));
   await page.click('.confirm__actions .btn--primary');
   await page.waitForFunction(() => !!document.querySelector('.confirm.is-hidden'));
   const event = back.inserts.find((i) => i.table === 'events').row;
@@ -861,6 +893,45 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   // die falsche Antwort — das steht so auch in der Migration.
   check('termine: keine Uhrzeit heißt null, nicht 00:00', event.starts_at === null,
     JSON.stringify(event.starts_at));
+  check('mehrtägig: ohne Bis-Datum bleibt der Termin eintägig', event.ends_on === null,
+    JSON.stringify(event.ends_on));
+
+  // Und einmal mit Zeitraum — der Fall, um den es ging.
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Jahrestreffen 2027');
+  await page.locator('.confirm input[type=date]').nth(0).fill('2027-08-05');
+  await page.locator('.confirm input[type=date]').nth(1).fill('2027-08-10');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForFunction(() => !!document.querySelector('.confirm.is-hidden'));
+  const treffen = back.inserts.filter((i) => i.table === 'events').pop().row;
+  check('mehrtägig: Anfang und Ende gehen beide raus',
+    treffen.starts_on === '2027-08-05' && treffen.ends_on === '2027-08-10',
+    JSON.stringify(treffen));
+
+  // Ein „bis" auf demselben Tag ist kein Zeitraum, sondern derselbe Tag.
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Nur ein Tag');
+  await page.locator('.confirm input[type=date]').nth(0).fill(day(40));
+  await page.locator('.confirm input[type=date]').nth(1).fill(day(40));
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForFunction(() => !!document.querySelector('.confirm.is-hidden'));
+  check('mehrtägig: dasselbe Datum zweimal ist kein Zeitraum',
+    back.inserts.filter((i) => i.table === 'events').pop().row.ends_on === null);
+
+  // Ein Ende vor dem Anfang gar nicht erst abschicken.
+  const vorher = back.inserts.filter((i) => i.table === 'events').length;
+  const meldungen = await page.locator('.toast').count();
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Rückwärts');
+  await page.locator('.confirm input[type=date]').nth(0).fill(day(20));
+  await page.locator('.confirm input[type=date]').nth(1).fill(day(10));
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForFunction((had) => document.querySelectorAll('.toast').length > had, meldungen);
+  check('mehrtägig: ein Ende vor dem Anfang wird gar nicht erst geschickt',
+    back.inserts.filter((i) => i.table === 'events').length === vorher &&
+    (await page.locator('.toast').last().textContent()).includes('vor dem Anfang'),
+    await page.locator('.toast').last().textContent());
+  await page.click('.confirm:not(.is-hidden) .confirm__actions .btn:not(.btn--primary)');
 
   await shot(page, '5-termine');
   check('termine: keine Fehler', errors.length === 0, errors.join('\n'));

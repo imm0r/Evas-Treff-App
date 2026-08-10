@@ -90,6 +90,26 @@
     return parts[2] + '. ' + short + year;
   };
 
+  /**
+   * „5. – 10. August 2027", und nur so viel, wie sich wirklich unterscheidet.
+   *
+   * Der Monat zweimal zu nennen, wenn es derselbe ist, macht die Zeile länger
+   * ohne sie genauer zu machen — und auf einem Telefon ist Länge das Einzige,
+   * was knapp ist.
+   */
+  PS.formatRange = function (fromIso, toIso) {
+    if (!toIso || toIso === fromIso) return PS.formatDay(fromIso);
+    var a = fromIso.split('-').map(Number);
+    var b = toIso.split('-').map(Number);
+    var from = new Date(a[0], a[1] - 1, a[2]);
+    if (isNaN(from.getTime())) return fromIso;
+
+    var head = WEEKDAYS[from.getDay()] + ', ' + a[2] + '.';
+    if (a[0] !== b[0]) head += ' ' + MONTHS[a[1] - 1] + ' ' + a[0];
+    else if (a[1] !== b[1]) head += ' ' + MONTHS[a[1] - 1];
+    return head + ' – ' + PS.formatDay(toIso);
+  };
+
   PS.formatTime = function (hhmmss) {
     return hhmmss.slice(0, 2) + ':' + hhmmss.slice(2, 4);
   };
