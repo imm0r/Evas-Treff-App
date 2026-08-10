@@ -106,7 +106,7 @@ function makeBackend() {
   return {
     otpRequests: [], inserts: [], deletes: [], uploads: [], signCalls: 0,
     albums: [], photos: [], comments: [], people: [], board: [], invites: [],
-    events: [], queries: [], reads: [], patches: [],
+    events: [], queries: [], reads: [], patches: [], recipes: [], recipePhotos: [],
     profile: { id: 'user-1', email: 'ich@example.de', is_admin: true, person_id: 'p1',
       comments_seen_at: '2026-01-01T00:00:00Z', people: { name: 'Maria' } }
   };
@@ -278,6 +278,45 @@ async function stub(page, back) {
       back.inserts.push({ table: 'people.patch', row: Object.assign({ name: who }, row) });
       const person = back.people.find((x) => x.name === who);
       if (person) Object.assign(person, row);
+      return json(204, {});
+    }
+    if (p === '/rest/v1/recipes' && request.method() === 'GET') {
+      const slug = (url.searchParams.get('slug') || '').replace('eq.', '');
+      const rows = back.recipes
+        .filter((r) => !slug || r.slug === decodeURIComponent(slug))
+        .map((r) => Object.assign({}, r, {
+          recipe_photos: back.recipePhotos.filter((x) => x.recipe_id === r.id)
+        }));
+      return json(200, rows);
+    }
+    if (p === '/rest/v1/recipes' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'recipes', row });
+      const saved = Object.assign({ id: 'rz-' + (back.recipes.length + 1), profiles: null }, row);
+      back.recipes.push(saved);
+      return json(201, [saved]);
+    }
+    if (p === '/rest/v1/recipes' && request.method() === 'PATCH') {
+      const row = JSON.parse(request.postData());
+      back.patches.push({ table: 'recipes', row, query: url.search });
+      const id = (url.searchParams.get('id') || '').replace('eq.', '');
+      const hit = back.recipes.find((r) => r.id === id);
+      if (hit) Object.assign(hit, row);
+      return json(204, {});
+    }
+    if (p === '/rest/v1/recipe_photos' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'recipe_photos', row });
+      const saved = Object.assign({ id: 'rp-' + (back.recipePhotos.length + 1) }, row);
+      back.recipePhotos.push(saved);
+      return json(201, [saved]);
+    }
+    if (p === '/rest/v1/recipe_photos' && request.method() === 'PATCH') {
+      const row = JSON.parse(request.postData());
+      back.patches.push({ table: 'recipe_photos', row, query: url.search });
+      const id = (url.searchParams.get('id') || '').replace('eq.', '');
+      const hit = back.recipePhotos.find((x) => x.id === id);
+      if (hit) Object.assign(hit, row);
       return json(204, {});
     }
     if (p === '/rest/v1/profiles') return json(200, [back.profile]);
@@ -1047,6 +1086,124 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await context.close();
 }
 
+// --- 6b. Rezepte -----------------------------------------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  const kuchen = await makeJpeg(scratch, 900, 700, 25, 'Kuchen');
+  await scratch.close();
+  images.set('rezepte/omas-apfelkuchen/eins_thumb.jpg', kuchen);
+  images.set('rezepte/omas-apfelkuchen/eins.jpg', kuchen);
+  images.set('rezepte/omas-apfelkuchen/zwei_thumb.jpg', kuchen);
+  images.set('rezepte/omas-apfelkuchen/zwei.jpg', kuchen);
+
+  back.recipes = [
+    { id: 'rz-1', slug: 'omas-apfelkuchen', title: "Omas Apfelkuchen", servings: 8,
+      ingredients: '500 g Mehl\n\n3 Eier\neine Prise Salz',
+      steps: 'Alles verrühren.\nEine Stunde ruhen lassen.',
+      note: 'Schmeckt am zweiten Tag besser.',
+      created_by: 'user-1', created_at: '2026-08-01T10:00:00Z',
+      profiles: { people: { name: 'Maria' } } },
+    { id: 'rz-2', slug: 'brotaufstrich', title: 'Brotaufstrich', servings: null,
+      ingredients: 'Was da ist', steps: '', note: null,
+      created_by: 'user-9', created_at: '2026-08-02T10:00:00Z',
+      profiles: { people: { name: 'Ines' } } }
+  ];
+  // Absichtlich in der falschen Reihenfolge und mit einer Lücke in den Zahlen:
+  // sortiert werden muss nach `sort_order`, nicht nach Ankunft.
+  back.recipePhotos = [
+    { id: 'rp-2', recipe_id: 'rz-1', storage_path: 'rezepte/omas-apfelkuchen/zwei.jpg',
+      thumb_path: 'rezepte/omas-apfelkuchen/zwei_thumb.jpg', sort_order: 7, uploaded_by: 'user-9' },
+    { id: 'rp-1', recipe_id: 'rz-1', storage_path: 'rezepte/omas-apfelkuchen/eins.jpg',
+      thumb_path: 'rezepte/omas-apfelkuchen/eins_thumb.jpg', sort_order: 3, uploaded_by: 'user-1' }
+  ];
+
+  await page.goto(origin + '/rezepte.html' + SESSION);
+  await page.waitForSelector('.shelf__card');
+  await shot(page, '7-rezepte');
+  check('rezepte: das Regal zeigt alle', (await page.locator('.shelf__card').count()) === 2);
+  check('rezepte: ein Rezept ohne Bild bekommt kein leeres graues Feld',
+    (await page.locator('.shelf__cover--none').count()) === 1);
+  check('rezepte: für wie viele und von wem',
+    (await page.locator('.shelf__count').first().textContent()) === 'für 8 · von Maria',
+    await page.locator('.shelf__count').first().textContent());
+
+  await page.locator('.shelf__card').first().click();
+  await page.waitForSelector('.rezept');
+  check('rezepte: ein Rezept hat eine eigene Adresse',
+    page.url().includes('rezept=omas-apfelkuchen'), page.url());
+
+  // Der Kern: eine Zeile ist ein Punkt, leere Zeilen sind keine.
+  check('rezepte: Zutaten werden zur Liste, eine Zeile ein Punkt',
+    (await page.locator('.rezept__zutaten li').allTextContents()).join('|')
+      === '500 g Mehl|3 Eier|eine Prise Salz',
+    JSON.stringify(await page.locator('.rezept__zutaten li').allTextContents()));
+  check('rezepte: die Zubereitung ist nummeriert',
+    (await page.locator('.rezept__schritte li').count()) === 2);
+  // "500 g Mehl" bleibt eine Zeile, wie jemand sie aufgeschrieben hat.
+  check('rezepte: keine Menge wird aus der Zutat herausgeraten',
+    (await page.locator('.rezept__zutaten li').first().textContent()) === '500 g Mehl');
+
+  await shot(page, '7-rezept');
+  check('rezepte: das Hauptbild ist das mit der kleinsten Zahl, nicht das erste geladene',
+    (await page.locator('.rezept__rahmen').first().locator('img.is-cover').count()) === 1 &&
+    (await page.locator('.rezept__bild.is-cover').count()) === 1);
+
+  // Zum Hauptbild machen: unter ALLE anderen, nicht auf eine feste Zahl.
+  await page.locator('.rezept__cover').first().click();
+  await page.waitForFunction(() => !!document.querySelector('.rezept'));
+  const umsortiert = back.patches.filter((i) => i.table === 'recipe_photos').pop();
+  check('rezepte: zum Hauptbild machen schiebt es unter alle anderen',
+    umsortiert.row.sort_order === 2 && umsortiert.query.includes('id=eq.rp-2'),
+    JSON.stringify(umsortiert));
+
+  // Ein fremdes Rezept: dieses Konto ist Admin, darf also trotzdem.
+  await page.goto(origin + '/rezepte.html?rezept=brotaufstrich');
+  await page.waitForSelector('.rezept');
+  check('rezepte: Admins dürfen auch fremde bearbeiten',
+    (await page.locator('.rezept__tools .btn--danger').count()) === 1);
+
+  // Aufschreiben.
+  await page.goto(origin + '/rezepte.html');
+  await page.waitForSelector('.shelf__card');
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Kartoffelsalat');
+  await page.locator('.confirm textarea').nth(0).fill('Kartoffeln\nEssig');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForFunction(() => location.search.includes('rezept='));
+  const neu = back.inserts.find((i) => i.table === 'recipes').row;
+  check('rezepte: aufschreiben nimmt das eigene Konto und einen sauberen Slug',
+    neu.title === 'Kartoffelsalat' && neu.slug === 'kartoffelsalat' &&
+    neu.created_by === 'user-1' && neu.ingredients === 'Kartoffeln\nEssig',
+    JSON.stringify(neu));
+  check('rezepte: und landet direkt beim neuen Rezept',
+    page.url().includes('rezept=kartoffelsalat'), page.url());
+
+  // Ohne alles ist es kein Rezept.
+  await page.goto(origin + '/rezepte.html');
+  await page.waitForSelector('.shelf__card');
+  const vorher = back.inserts.filter((i) => i.table === 'recipes').length;
+  await page.click('.topbar__actions .btn--primary');
+  await page.fill('.confirm input[type=text]', 'Nichts drin');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForSelector('.toast');
+  check('rezepte: ohne Zutaten und ohne Zubereitung wird nichts geschickt',
+    back.inserts.filter((i) => i.table === 'recipes').length === vorher &&
+    (await page.locator('.toast').last().textContent()).includes('kein Rezept'),
+    await page.locator('.toast').last().textContent());
+
+  check('rezepte: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
 // --- 7. nothing is reachable without a session -----------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
@@ -1058,7 +1215,8 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     if (!auth.includes('Bearer ')) reached.push(new URL(route.request().url()).pathname);
     return route.fulfill({ status: 401, headers: { 'Content-Type': 'application/json' }, body: '{}' });
   });
-  for (const where of ['/index.html', '/upload.html', '/board.html', '/admin.html', '/dates.html']) {
+  for (const where of ['/index.html', '/upload.html', '/board.html', '/admin.html',
+    '/dates.html', '/rezepte.html']) {
     await page.goto(origin + where);
     await page.waitForSelector('.gate');
     await page.waitForTimeout(300);

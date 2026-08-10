@@ -457,6 +457,156 @@
     });
   };
 
+  // --- Rezepte ----------------------------------------------------------------
+
+  /*
+   * Die Rezeptliste. Ein Bild pro Karte, und das ist immer das erste.
+   *
+   * Bilder kommen eingebettet mit, statt in einer zweiten Abfrage: es sind
+   * wenige pro Rezept, und sie werden hier ohnehin nur zum Aussuchen des
+   * Hauptbildes gebraucht.
+   */
+  data.recipes = async function () {
+    var rows = await PS.sb.select('recipes',
+      'select=id,slug,title,servings,created_by,created_at,' +
+      'profiles(people(name)),recipe_photos(thumb_path,sort_order)' +
+      '&order=title.asc');
+
+    var paths = [];
+    rows.forEach(function (row) {
+      var first = cover(row);
+      if (first) paths.push(first);
+    });
+    var signed = await PS.sb.signPaths('photos', paths, SIGN_SECONDS);
+
+    return rows.map(function (row) {
+      var first = cover(row);
+      return {
+        id: row.id,
+        slug: row.slug,
+        title: row.title,
+        servings: row.servings || null,
+        ownerId: row.created_by,
+        owner: (row.profiles && row.profiles.people && row.profiles.people.name) || null,
+        photos: (row.recipe_photos || []).length,
+        coverUrl: first ? (signed[first] || null) : null
+      };
+    });
+  };
+
+  /** Das Vorschaubild mit der kleinsten `sort_order` — sonst keins. */
+  function cover(row) {
+    var best = null;
+    (row.recipe_photos || []).forEach(function (photo) {
+      if (!best || photo.sort_order < best.sort_order) best = photo;
+    });
+    return best && best.thumb_path;
+  }
+
+  data.recipe = async function (slug) {
+    var rows = await PS.sb.select('recipes',
+      'select=id,slug,title,servings,ingredients,steps,note,created_by,created_at,' +
+      'profiles(people(name)),' +
+      'recipe_photos(id,storage_path,thumb_path,sort_order,uploaded_by)' +
+      '&slug=eq.' + encodeURIComponent(slug));
+    if (!rows.length) return null;
+    var row = rows[0];
+
+    var photos = (row.recipe_photos || []).slice().sort(function (a, b) {
+      return a.sort_order - b.sort_order;
+    });
+    var paths = [];
+    photos.forEach(function (p) { paths.push(p.thumb_path, p.storage_path); });
+    var signed = await PS.sb.signPaths('photos', paths, SIGN_SECONDS);
+
+    return {
+      id: row.id,
+      slug: row.slug,
+      title: row.title,
+      servings: row.servings || null,
+      ingredients: row.ingredients || '',
+      steps: row.steps || '',
+      note: row.note || '',
+      ownerId: row.created_by,
+      owner: (row.profiles && row.profiles.people && row.profiles.people.name) || null,
+      photos: photos.map(function (p, index) {
+        return {
+          id: p.id,
+          isCover: index === 0,
+          sortOrder: p.sort_order,
+          uploaderId: p.uploaded_by,
+          storagePath: p.storage_path,
+          thumbPath: p.thumb_path,
+          thumbUrl: signed[p.thumb_path] || null,
+          photoUrl: signed[p.storage_path] || null
+        };
+      })
+    };
+  };
+
+  data.createRecipe = async function (recipe) {
+    var rows = await PS.sb.insert('recipes', {
+      slug: recipe.slug,
+      title: recipe.title,
+      servings: recipe.servings || null,
+      ingredients: recipe.ingredients || '',
+      steps: recipe.steps || '',
+      note: recipe.note || null,
+      created_by: PS.sb.user() && PS.sb.user().id
+    });
+    return rows[0];
+  };
+
+  data.updateRecipe = async function (recipe, fields) {
+    await PS.sb.patch('recipes', 'id=eq.' + recipe.id, fields);
+  };
+
+  data.removeRecipe = async function (recipe) {
+    // Erst die Zeile: die Bildzeilen hängen per Cascade dran, und eine Datei
+    // ohne Zeile ist unsichtbar, während eine Zeile ohne Datei ein Loch ist.
+    var paths = [];
+    (recipe.photos || []).forEach(function (p) { paths.push(p.storagePath, p.thumbPath); });
+    await PS.sb.remove('recipes', 'id=eq.' + recipe.id);
+    if (paths.length) await PS.sb.removeFiles('photos', paths);
+  };
+
+  /**
+   * Ein Bild an ein Rezept hängen.
+   *
+   * Ans Ende, nicht an den Anfang: das erste hochgeladene bleibt das Hauptbild,
+   * bis jemand ausdrücklich ein anderes dazu macht. Sonst würde das letzte
+   * Schritt-für-Schritt-Foto stillschweigend zum Aushängeschild.
+   */
+  data.addRecipePhoto = async function (recipe, full, thumb, order) {
+    var base = 'rezepte/' + recipe.slug + '/' + objectId();
+    await PS.sb.upload('photos', base + '.jpg', full);
+    await PS.sb.upload('photos', base + '_thumb.jpg', thumb);
+    var rows = await PS.sb.insert('recipe_photos', {
+      recipe_id: recipe.id,
+      storage_path: base + '.jpg',
+      thumb_path: base + '_thumb.jpg',
+      sort_order: typeof order === 'number' ? order : 0,
+      uploaded_by: PS.sb.user() && PS.sb.user().id
+    });
+    return rows[0];
+  };
+
+  data.removeRecipePhoto = async function (photo) {
+    await PS.sb.remove('recipe_photos', 'id=eq.' + photo.id);
+    await PS.sb.removeFiles('photos', [photo.storagePath, photo.thumbPath]);
+  };
+
+  /**
+   * Unter alle anderen schieben — das Hauptbild ist das mit der kleinsten Zahl.
+   *
+   * Eine absteigende Zahl statt einer Umnummerierung aller Bilder: das ist ein
+   * einziges UPDATE statt einer Schleife, die mittendrin abbrechen kann und
+   * dann zwei Hauptbilder oder keins hinterlässt.
+   */
+  data.makeCover = async function (recipe, photo, lowest) {
+    await PS.sb.patch('recipe_photos', 'id=eq.' + photo.id, { sort_order: lowest - 1 });
+  };
+
   // --- people ---------------------------------------------------------------
 
   data.people = async function () {

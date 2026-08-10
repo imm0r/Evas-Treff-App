@@ -475,6 +475,75 @@ img { display: block; max-width: 100%; }
 .date__fields { display: flex; gap: 8px; }
 .date__fields .field { flex: 1; min-width: 0; }
 
+/* --- Rezepte -------------------------------------------------------------- */
+
+.rezepte { max-width: 620px; margin: 0 auto; padding: 0 var(--pad); }
+
+/* Kein Bild ist bei einer abgetippten Karteikarte der Normalfall — ein leeres
+   graues Feld sähe aus wie ein Ladefehler, ein Topf sieht aus wie Absicht. */
+.shelf__cover--none {
+  display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2);
+}
+.shelf__none { font-size: 34px; opacity: 0.55; }
+
+.rezept {
+  margin-top: 12px;
+  padding: 14px 16px 16px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.rezept__who { margin: 0 0 4px; font-size: 13px; color: var(--ink-dim); }
+.rezept__head {
+  margin: 18px 0 8px;
+  font-family: var(--display);
+  font-size: 17px;
+}
+.rezept__head:first-child { margin-top: 0; }
+
+/* Zutaten hängend eingerückt: bei „500 g Mehl, gesiebt und gut abgemessen"
+   soll die zweite Zeile unter dem Text stehen, nicht unter dem Punkt. */
+.rezept__zutaten, .rezept__schritte { margin: 0; padding-left: 22px; }
+.rezept__zutaten li, .rezept__schritte li { margin: 5px 0; line-height: 1.5; }
+.rezept__zutaten { list-style: disc; }
+.rezept__schritte { list-style: decimal; }
+.rezept__schritte li { padding-left: 4px; }
+
+.rezept__note {
+  margin: 16px 0 0; padding-top: 12px;
+  border-top: 1px solid var(--line);
+  font-size: 14px; color: var(--ink-dim); font-style: italic;
+  white-space: pre-wrap;
+}
+
+.rezept__tools { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 18px; }
+
+.rezept__bilder {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+/* Das Hauptbild über die ganze Breite: es ist das, was das Rezept zeigt, die
+   anderen sind Beiwerk. */
+.rezept__rahmen:first-child { grid-column: 1 / -1; }
+.rezept__rahmen { position: relative; }
+.rezept__bild {
+  display: block; width: 100%; height: 100%;
+  aspect-ratio: 4 / 3; object-fit: cover;
+  border-radius: 6px; background: var(--surface-2);
+}
+.rezept__rahmen:first-child .rezept__bild { aspect-ratio: 16 / 10; }
+.rezept__cover {
+  position: absolute; left: 6px; bottom: 6px;
+  width: 30px; height: 30px; padding: 0;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6); color: #fff;
+  font: inherit; font-size: 14px; line-height: 30px; cursor: pointer;
+}
+.rezept__cover:hover { background: var(--accent); color: var(--accent-ink); }
+
 /* --- the guest list ------------------------------------------------------- */
 
 .guests { max-width: 620px; margin: 0 auto; padding: 0 var(--pad); }
@@ -778,6 +847,10 @@ img { display: block; max-width: 100%; }
   background: rgba(7, 7, 7, 0.82);
   backdrop-filter: blur(3px);
 }
+
+/* Das Rezeptformular ist länger als ein Bildschirm — es muss scrollen dürfen,
+   sonst sind Zubereitung und Speichern-Knopf auf dem Telefon nicht erreichbar. */
+.confirm__box--tall { max-height: 86vh; overflow-y: auto; }
 
 .confirm__box {
   width: 100%;
