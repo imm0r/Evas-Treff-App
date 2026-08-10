@@ -225,6 +225,142 @@
     if (post.imagePath) await PS.sb.removeFiles('photos', [post.imagePath]);
   };
 
+  // --- the calendar ---------------------------------------------------------
+
+  /** "2026-08-10" for today, in local time — `toISOString` would use UTC. */
+  function todayISO() {
+    var now = new Date();
+    return now.getFullYear() + '-' + two(now.getMonth() + 1) + '-' + two(now.getDate());
+  }
+
+  /**
+   * The next time this day-and-month comes around, today included.
+   *
+   * A birthday has no year of its own on the calendar: it is simply the next
+   * 3rd of May, which is this year until the 3rd of May has passed.
+   */
+  function nextOccurrence(day, month) {
+    var now = new Date();
+    var today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    var next = new Date(now.getFullYear(), month - 1, day);
+    if (next < today) next = new Date(now.getFullYear() + 1, month - 1, day);
+    return next;
+  }
+
+  function isoOf(date) {
+    return date.getFullYear() + '-' + two(date.getMonth() + 1) + '-' + two(date.getDate());
+  }
+
+  /**
+   * Everything ahead, in one list, nearest first.
+   *
+   * Two tables, because an event and a birthday have nothing in common behind
+   * the screen — one is owned and one-off, the other belongs to a person and
+   * comes back every year. On screen they are the same thing, so they are
+   * merged here rather than in the page.
+   *
+   * Past events are dropped by the query, not by the browser: there is no
+   * reason to ship years of them over the wire to throw them away.
+   */
+  data.calendar = async function () {
+    var today = todayISO();
+    var rows = await PS.sb.select('events',
+      'select=id,title,starts_on,starts_at,place,note,created_by,' +
+      'profiles(people(name)),event_replies(profile_id,answer,profiles(people(name)))' +
+      '&starts_on=gte.' + today + '&order=starts_on.asc');
+
+    var items = rows.map(function (row) {
+      return {
+        kind: 'event',
+        id: row.id,
+        title: row.title,
+        on: row.starts_on,
+        // Postgres hands back "15:00:00"; the seconds are never interesting.
+        at: row.starts_at ? row.starts_at.slice(0, 5) : null,
+        place: row.place || '',
+        note: row.note || '',
+        hostId: row.created_by,
+        host: (row.profiles && row.profiles.people && row.profiles.people.name) || null,
+        replies: (row.event_replies || []).map(function (r) {
+          return {
+            id: r.profile_id,
+            answer: r.answer,
+            name: (r.profiles && r.profiles.people && r.profiles.people.name) || null
+          };
+        })
+      };
+    });
+
+    var birthdays = await PS.sb.select('people',
+      'select=name,birth_day,birth_month,birth_year&birth_day=not.is.null&order=sort_order');
+    birthdays.forEach(function (person) {
+      var when = nextOccurrence(person.birth_day, person.birth_month);
+      items.push({
+        kind: 'birthday',
+        id: 'geb-' + person.name,
+        title: person.name,
+        on: isoOf(when),
+        at: null,
+        // Only when the year is actually known. An age nobody told us is a
+        // guess, and a guessed age is worse than no age.
+        turns: person.birth_year ? when.getFullYear() - person.birth_year : null,
+        replies: []
+      });
+    });
+
+    return items.sort(function (a, b) {
+      if (a.on !== b.on) return a.on < b.on ? -1 : 1;
+      // Same day: the timed thing first, then the all-day one.
+      return (a.at || '99:99') < (b.at || '99:99') ? -1 : 1;
+    });
+  };
+
+  data.createEvent = async function (event) {
+    var rows = await PS.sb.insert('events', {
+      title: event.title,
+      starts_on: event.on,
+      starts_at: event.at || null,
+      place: event.place || null,
+      note: event.note || null,
+      created_by: PS.sb.user() && PS.sb.user().id
+    });
+    return rows[0];
+  };
+
+  data.removeEvent = async function (event) {
+    await PS.sb.remove('events', 'id=eq.' + event.id);
+  };
+
+  /**
+   * Answering again replaces the earlier answer instead of adding one.
+   *
+   * The primary key is (event, person), so an upsert is the whole mechanism —
+   * changing your mind is the normal case, not an edge case.
+   */
+  data.reply = async function (eventId, answer) {
+    await PS.sb.insert('event_replies', {
+      event_id: eventId,
+      profile_id: PS.sb.user() && PS.sb.user().id,
+      answer: answer
+    }, { upsert: true, query: 'on_conflict=event_id,profile_id' });
+  };
+
+  // --- birthdays, on the family page ----------------------------------------
+
+  /** Everyone on the group photo, with whatever birthday is already known. */
+  data.roster = async function () {
+    return PS.sb.select('people',
+      'select=name,birth_day,birth_month,birth_year&order=sort_order');
+  };
+
+  data.setBirthday = async function (personName, day, month, year) {
+    await PS.sb.patch('people', 'name=eq.' + encodeURIComponent(personName), {
+      birth_day: day || null,
+      birth_month: month || null,
+      birth_year: year || null
+    });
+  };
+
   // --- people ---------------------------------------------------------------
 
   data.people = async function () {

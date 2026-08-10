@@ -17,7 +17,7 @@
   var PS = global.PS;
   var el = PS.el;
 
-  var state = { me: null, invites: [], people: null, busy: false };
+  var state = { me: null, invites: [], roster: [], people: null, busy: false };
   var nodes = {};
 
   async function boot() {
@@ -64,6 +64,9 @@
     ]);
 
     nodes.list = el('main', { class: 'feed guests' });
+    // Die Geburtstage stehen auf derselben Seite, weil nur ein Admin `people`
+    // ändern darf — und weil beides dasselbe ist: wer zur Familie gehört.
+    nodes.birthdays = el('main', { class: 'feed guests' });
 
     app.appendChild(el('header', { class: 'topbar' }, [
       el('div', { class: 'topbar__brand' }, [el('h1', { class: 'topbar__title', text: 'Familie' })]),
@@ -73,6 +76,7 @@
     ]));
     app.appendChild(el('div', { class: 'panel' }, [nodes.form]));
     app.appendChild(nodes.list);
+    app.appendChild(nodes.birthdays);
     app.appendChild(PS.nav(state.me));
   }
 
@@ -81,6 +85,7 @@
     nodes.list.appendChild(el('div', { class: 'status' }, [el('div', { class: 'spinner' })]));
     try {
       state.invites = await PS.data.invites();
+      state.roster = await PS.data.roster();
       if (!state.people) {
         state.people = await PS.people.load();
         if (state.people) PS.people.whenReady(render);
@@ -105,6 +110,11 @@
   }
 
   function render() {
+    renderInvites();
+    renderBirthdays();
+  }
+
+  function renderInvites() {
     nodes.list.innerHTML = '';
     if (!state.invites.length) {
       nodes.list.appendChild(el('div', { class: 'status' }, [
@@ -143,6 +153,76 @@
 
       nodes.list.appendChild(row);
     });
+  }
+
+  // --- Geburtstage ----------------------------------------------------------
+
+  /*
+   * Ein Feld pro Person, direkt in der Liste, ohne Formular und ohne
+   * Speichern-Knopf: elf Zeilen einmal im Leben auszufüllen ist kein Vorgang,
+   * der einen eigenen Dialog verdient. Gespeichert wird, sobald ein Feld
+   * fertig ist.
+   *
+   * Das Jahr darf fehlen. Bei den Älteren weiß es niemand mehr, und dann steht
+   * eben "am 3. Mai" statt "wird 78" — siehe die Migration.
+   */
+  function renderBirthdays() {
+    nodes.birthdays.innerHTML = '';
+    if (!state.roster.length) return;
+
+    nodes.birthdays.appendChild(el('h2', { class: 'day', text: 'Geburtstage' }));
+    nodes.birthdays.appendChild(el('p', { class: 'hint', text:
+      'Tag, Monat, Jahr. Das Jahr darf fehlen — dann steht im Kalender kein Alter.' }));
+
+    state.roster.forEach(function (person) {
+      var day = el('input', {
+        class: 'field field--slim birthday__part', type: 'number', min: '1', max: '31',
+        placeholder: 'Tag', value: person.birth_day || ''
+      });
+      var month = el('input', {
+        class: 'field field--slim birthday__part', type: 'number', min: '1', max: '12',
+        placeholder: 'Monat', value: person.birth_month || ''
+      });
+      var year = el('input', {
+        class: 'field field--slim birthday__part birthday__year', type: 'number',
+        min: '1900', max: '2100', placeholder: 'Jahr', value: person.birth_year || ''
+      });
+
+      var row = el('div', { class: 'guest guest--birthday' }, [
+        el('div', { class: 'guest__body' }, [
+          el('strong', { class: 'guest__name', text: person.name })
+        ]),
+        el('div', { class: 'birthday__fields' }, [day, month, year])
+      ]);
+
+      var face = PS.people.avatar(person.name, 36);
+      if (face) { row.classList.add('guest--face'); row.insertBefore(face, row.firstChild); }
+
+      [day, month, year].forEach(function (field) {
+        field.addEventListener('change', function () { saveBirthday(person, day, month, year, row); });
+      });
+      nodes.birthdays.appendChild(row);
+    });
+  }
+
+  async function saveBirthday(person, day, month, year, row) {
+    var d = Number(day.value) || null;
+    var m = Number(month.value) || null;
+    var y = Number(year.value) || null;
+    // Der Server lehnt Halbes ohnehin ab; hier steht es nur früher und
+    // freundlicher auf dem Bildschirm.
+    if ((d && !m) || (m && !d)) { PS.toast('Tag und Monat gehören zusammen.'); return; }
+    if (y && !d) { PS.toast('Ein Jahr allein ergibt keinen Geburtstag.'); return; }
+
+    try {
+      await PS.data.setBirthday(person.name, d, m, y);
+    } catch (error) {
+      PS.toast(PS.escapeError(error), 'error');
+      return;
+    }
+    person.birth_day = d; person.birth_month = m; person.birth_year = y;
+    row.classList.add('is-saved');
+    setTimeout(function () { row.classList.remove('is-saved'); }, 1200);
   }
 
   async function add() {
