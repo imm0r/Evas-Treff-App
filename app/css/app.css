@@ -475,6 +475,25 @@ img { display: block; max-width: 100%; }
 .date__fields { display: flex; gap: 8px; }
 .date__fields .field { flex: 1; min-width: 0; }
 
+/* --- Sicherung ------------------------------------------------------------ */
+
+.sicherung { max-width: 620px; margin: 0 auto; padding: 0 var(--pad) 12px; }
+.sicherung__head { margin: 0 0 10px; font-family: var(--display); font-size: 17px; }
+.sicherung__liste {
+  margin: 12px 0; padding-left: 20px;
+  columns: 2; column-gap: 20px;
+  font-size: 13px; color: var(--ink-dim);
+}
+.sicherung__stand {
+  margin: 0 0 8px;
+  font-size: 13px;
+  /* Der Dateiname wechselt bei jeder Datei; ohne feste Höhe hüpft der Balken
+     darunter, sobald ein Name umbricht. */
+  min-height: 2.6em;
+  overflow-wrap: anywhere;
+}
+.sicherung__fertig { margin-top: 12px; }
+.sicherung__warnung { margin-top: 14px; }
 /* --- Benachrichtigungen --------------------------------------------------- */
 
 .glocke {
@@ -506,6 +525,21 @@ img { display: block; max-width: 100%; }
 /* Ungelesen wird hervorgehoben, gelesen bleibt lesbar: ein noch gültiger
    Aushang steht weiter da, soll aber nicht mehr rufen. */
 .aushang.is-new { border-left-color: var(--accent); }
+/* Zurückhaltend, bis man hinschaut — und dann rot. Ein Knopf, der etwas für
+   elf Leute löscht, darf nicht aussehen wie ein Schließen-Kreuz. */
+.aushang__delete {
+  position: absolute; top: 8px; right: 8px;
+  width: 30px; height: 30px; padding: 0;
+  border: none; border-radius: 8px;
+  background: transparent; color: var(--ink-dim);
+  font-size: 14px; line-height: 30px; cursor: pointer;
+  opacity: 0.55;
+}
+/* Derselbe Ton wie .btn--danger weiter oben, statt eines neu erfundenen. */
+.aushang__delete:hover, .aushang__delete:focus-visible {
+  opacity: 1; color: var(--danger); background: #33201b;
+}
+
 .aushang__text { margin: 0; white-space: pre-wrap; line-height: 1.5; }
 .aushang__meta { margin: 8px 0 0; font-size: 12px; color: var(--ink-dim); }
 

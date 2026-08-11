@@ -126,6 +126,32 @@ URL. The second one used to get *„Das gibt es schon."* and a dead end; now it
 becomes `-2`. On the server's refusal rather than a lookup first: two people
 creating at the same moment would both pass a lookup and one would still fail.
 
+**The backup exists because Supabase's does not cover the photos.** Its own
+docs are explicit: *"Database backups do not include objects you store via the
+Storage API"* — so the daily backup holds the albums, comments and recipes, and
+none of the pictures. It reaches back seven days, and *"when you delete a
+project, we permanently remove all associated data, including any backups"*.
+Against a lapsed card or a wrong click it protects nothing.
+
+So `sicherung.html` (admins only) writes one file you can put on a drive of
+your own. Two things decide what it looks like:
+
+* **Readable names.** In storage a picture is `evas-treff/a3f81c22.jpg`; in the
+  archive it is `Alben/Eva's Treff/2026-08-07_2133_Maria.jpg`. A backup you
+  cannot open without the app is not a backup.
+* **Complete, not just pretty.** Beside the browsable pictures sit `daten.json`
+  with every table and the thumbnails under their original paths, so the state
+  can be restored and not merely looked at. A `LIESMICH.txt` explains the
+  layout and warns that email addresses are in there.
+
+The ZIP is written by hand — the project has no build step and no
+dependencies, and an uncompressed ZIP is three blocks and a checksum. Nothing
+is compressed: the contents are JPEGs and video, so packing them costs minutes
+on a phone and saves nothing. It streams to disk where the browser allows it,
+because assembling gigabytes of video in memory kills the tab of exactly the
+family with the most videos. What cannot be fetched is listed in
+`FEHLENDE-DATEIEN.txt` *inside* the archive — a backup is read when the
+original is gone, and by then any message on screen is long dismissed.
 **Notifications reach people who are not looking.** The news page only catches
 you once you open the app of your own accord; "Die Oma ist wieder zu Hause"
 should arrive without anyone having to check. So an announcement now wakes a
@@ -169,6 +195,14 @@ something. Only *unread* things trigger it. An announcement can carry an
 "until" date, and then it stays readable on the page after you have seen it
 without ever stopping you again — otherwise the choice would be between the
 barbecue notice ambushing you daily and it vanishing after one glance.
+
+There is no "close" on this page, and the button in the corner of an
+announcement is not one. It used to be a `×`, which everybody reads as dismiss —
+it deletes the announcement for the whole family. It is a bin now, its tooltip
+says so, and the confirmation says "für ALLE", quotes the opening words so you
+know which one you pulled at, and points out that it vanishes for people who
+have not read it yet. You leave the page by going to the albums; it stops
+holding you up by itself.
 
 Read announcements do not disappear, they step aside. The page shows only what
 is unread or still current — otherwise every visit would open with the whole
@@ -398,6 +432,10 @@ Three checks, all of which measure the code against something other than itself:
   second one can be created, a move sending `album_id` and nothing else, the
   unread mark appearing only on the picture that has one and clearing when the
   thread is opened, and a signed-out page requesting nothing at all.
+- The backup is downloaded for real and handed to **Python's `zipfile`** —
+  table of contents, every CRC, the bytes of a picture. The ZIP writer is
+  homemade; checking it with its own reader would only confirm its own
+  mistakes, and an archive only this app can open is not a backup.
 - Before any of that, **every page is opened once with a full backend** and must
   come up clean — no console error *and* no error box. A module calling into
   another whose file the page forgot to load dies with "Cannot read properties
