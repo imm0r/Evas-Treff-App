@@ -1,37 +1,41 @@
 /*
- * Textauszeichnung: fett, kursiv, unterstrichen, Links, Listen.
+ * Text formatieren: fett, kursiv, unterstrichen, Links, Listen.
  *
- * WAS GESPEICHERT WIRD, IST WEITER NUR TEXT.
+ * GESCHRIEBEN WIRD IM FERTIGEN TEXT.
  *
- * In der Datenbank steht `**fett**`, nicht `<b>fett</b>`. Das ist die
- * wichtigste Entscheidung hier, und sie hat drei Gründe:
+ * Markieren, „F" drücken, der Text ist fett. Keine Sternchen, keine Vorschau,
+ * kein zweites Feld. Die erste Fassung setzte sichtbare Marken in ein
+ * gewöhnliches Textfeld und zeigte darunter, was daraus wird — technisch
+ * sauber und für jemanden, der einfach etwas schreiben will, eine Zumutung.
  *
- *   1. Gespeichertes HTML muss man beim Anzeigen wieder entschärfen. Ein
- *      einziger vergessener Pfad, und jemand kann der Familie Schadcode
- *      unterschieben. Text kann das nicht.
- *   2. Die Sicherung bleibt lesbar. In `daten.json` und in `LIESMICH.txt`
- *      steht dann immer noch etwas, das ein Mensch entziffern kann.
- *   3. Kein Schema ändert sich. Keine Migration, keine Umstellung von
- *      74 vorhandenen Texten.
+ * GESPEICHERT WIRD TROTZDEM NUR TEXT.
+ *
+ * In der Datenbank steht `**fett**`, nicht `<b>fett</b>`. Das sieht niemand,
+ * es kostet also nichts — und es hält drei Dinge heil:
+ *
+ *   1. Was hereinkopiert wird, muss ohnehin ausgesiebt werden. Ein Absatz aus
+ *      WhatsApp oder einer Webseite bringt Schriftarten, Farben, Tabellen und
+ *      leere Container mit. Ohne Aussieben sähe die Pinnwand nach drei
+ *      Einfügungen aus wie fünf verschiedene Webseiten. Dass dabei auch kein
+ *      Schadcode durchkommt, ist ein Nebenprodukt, kein Misstrauen.
+ *   2. Die Sicherung bleibt lesbar. In `daten.json` steht weiter etwas, das
+ *      ein Mensch entziffern kann.
+ *   3. Kein Schema ändert sich, keine Migration, keine Umstellung der
+ *      vorhandenen Texte.
  *
  * BEIM ANZEIGEN WIRD NIE `innerHTML` BENUTZT.
  *
- * Dieses Modul baut Knoten (`createElement`, `createTextNode`). Damit ist ein
- * eingeschleustes `<script>` keine Frage von Sorgfalt beim Maskieren, sondern
- * strukturell unmöglich: aus Text wird ein Textknoten, niemals Markup.
+ * Dieses Modul baut Knoten (`createElement`, `createTextNode`). Aus Text wird
+ * ein Textknoten, niemals Markup.
  *
  * DIE SPRACHE IST ABSICHTLICH KLEIN.
  *
  *   **fett**              __unterstrichen__       - Aufzählung
  *   *kursiv*              [Text](https://…)       1. Nummerierung
  *
- * Kein `#` für Überschriften, kein Code, keine Zitate, keine Tabellen. Wer
- * der Familie etwas schreibt, braucht sechs Dinge, nicht sechzig — und jede
- * weitere Regel ist eine weitere Art, wie ein normaler Satz versehentlich
- * anders aussieht als getippt.
- *
- * Aufzählungen nur mit `-`, nicht mit `*`: sonst wäre eine Zeile, die mit
- * einem Sternchen beginnt, mal eine Liste und mal der Anfang von kursiv.
+ * Sechs Dinge, nicht sechzig. Aufzählungen nur mit `-`, nicht mit `*`: sonst
+ * wäre eine Zeile, die mit einem Sternchen beginnt, mal eine Liste und mal der
+ * Anfang von kursiv.
  */
 (function (global) {
   'use strict';
@@ -234,113 +238,237 @@
     return s;
   };
 
-  /** Steht in diesem Text überhaupt eine Auszeichnung? */
-  text.hatAuszeichnung = function (quelle) {
-    var s = String(quelle == null ? '' : quelle);
-    return /\*\*[^*\n]+\*\*|__[^_\n]+__|\*[^*\n]+\*|\[[^\]\n]+\]\([^)\s]+\)|^\s*(-|\d+[.)])\s+/m.test(s);
-  };
 
-  // --- die Knopfleiste über dem Schreibfeld ------------------------------------
+  // --- der Schreibbereich ------------------------------------------------------
 
   /*
-   * Ein Textfeld mit Knöpfen, kein WYSIWYG-Editor.
+   * WAS MAN SIEHT, IST DAS ERGEBNIS.
    *
-   * `contenteditable` sähe vertrauter aus und wäre eine andere Größenordnung
-   * an Aufwand und Fehlern: jeder Browser baut daraus anderes HTML, Einfügen
-   * aus Word schleppt Formatvorlagen ein, und am Ende steht doch wieder die
-   * Frage, wie man das gefahrlos speichert. Knöpfe, die Zeichen einsetzen,
-   * tun genau eine Sache und tun sie überall gleich.
+   * Hier stand zuerst ein gewöhnliches Textfeld: Knöpfe setzten `**Sternchen**`
+   * in den Text, darunter zeigte eine Vorschau, was daraus wird. Technisch
+   * sauber, und für jemanden, der einfach etwas schreiben will, eine Zumutung —
+   * zwei Felder, eine fremde Zeichensprache, und der Satz sieht beim Tippen
+   * nicht aus wie hinterher.
    *
-   * Damit trotzdem niemand raten muss, wie `**so etwas**` aussehen wird,
-   * blendet sich unter dem Feld eine Vorschau ein — aber erst, sobald wirklich
-   * eine Auszeichnung im Text steht. Wer einfach nur schreibt, sieht sie nie.
+   * Jetzt wird direkt im fertigen Text geschrieben. Markieren, „F" drücken, der
+   * Text ist fett. Keine Marken, keine Vorschau, kein zweites Feld.
+   *
+   * DAS TEXTFELD BLEIBT TROTZDEM.
+   *
+   * Es steht unsichtbar dahinter und trägt weiterhin den Wert. Jede Seite liest
+   * und schreibt `feld.value` wie bisher — kein Formular musste angefasst
+   * werden, und `maxlength` bleibt eine Zahl an genau einer Stelle. Der
+   * sichtbare Bereich und das Feld werden in beide Richtungen gekoppelt.
+   *
+   * GESPEICHERT WIRD WEITER NUR TEXT.
+   *
+   * Das sieht niemand mehr, es kostet also nichts — und es hält zwei Dinge
+   * heil: die Anzeige baut Knoten statt Markup (siehe oben), und die Sicherung
+   * bleibt lesbar.
    */
 
-  function ersetze(feld, von, bis, neu, markiereVon, markiereBis) {
-    var wert = feld.value;
-    feld.value = wert.slice(0, von) + neu + wert.slice(bis);
-    feld.focus();
-    feld.setSelectionRange(markiereVon, markiereBis);
-    // Von Hand gesetzte Werte lösen kein `input` aus — die Vorschau und jede
-    // Zeichenzählung hingen sonst hinterher.
-    feld.dispatchEvent(new Event('input', { bubbles: true }));
-  }
+  /*
+   * Der ursprüngliche Zugriff auf `value`, bevor wir ihn je Feld abfangen.
+   * Einmal am Modul, nicht in jeder Instanz: es ist immer dieselbe Beschreibung.
+   */
+  var ROH_WERT = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
 
-  /** Auszeichnung um die Auswahl legen — oder wieder entfernen. */
-  function umschliessen(feld, marke) {
-    var von = feld.selectionStart;
-    var bis = feld.selectionEnd;
-    var wert = feld.value;
-    var innen = wert.slice(von, bis);
-    var laenge = marke.length;
-
-    // Schon ausgezeichnet? Dann wieder abnehmen, statt zu verdoppeln.
-    if (wert.slice(von - laenge, von) === marke && wert.slice(bis, bis + laenge) === marke) {
-      ersetze(feld, von - laenge, bis + laenge, innen, von - laenge, bis - laenge);
-      return;
-    }
-    if (innen.slice(0, laenge) === marke && innen.slice(-laenge) === marke &&
-        innen.length > laenge * 2) {
-      var ohne = innen.slice(laenge, -laenge);
-      ersetze(feld, von, bis, ohne, von, von + ohne.length);
-      return;
-    }
-
-    ersetze(feld, von, bis, marke + innen + marke,
-      von + laenge, von + laenge + innen.length);
-  }
-
-  /** Jede angefasste Zeile vorn kennzeichnen. */
-  function zeilenweise(feld, praefix) {
-    var wert = feld.value;
-    var von = wert.lastIndexOf('\n', feld.selectionStart - 1) + 1;
-    var endeRoh = wert.indexOf('\n', feld.selectionEnd);
-    var bis = endeRoh === -1 ? wert.length : endeRoh;
-
-    var zeilen = wert.slice(von, bis).split('\n');
-    var neu = zeilen.map(function (z, i) {
-      var sauber = z.replace(/^\s*(?:-\s+|\d+[.)]\s+)/, '');
-      return sauber ? praefix(i + 1) + sauber : z;
-    }).join('\n');
-
-    ersetze(feld, von, bis, neu, von, von + neu.length);
-  }
-
-  function linkEinsetzen(feld) {
-    var von = feld.selectionStart;
-    var bis = feld.selectionEnd;
-    var innen = feld.value.slice(von, bis);
-    var beschriftung = innen || 'Text';
-    var neu = '[' + beschriftung + '](https://)';
-    // Der Zeiger landet hinter `https://`, also genau dort, wo als Nächstes
-    // die Adresse hingehört.
-    var zeigerAuf = von + neu.length - 1;
-    ersetze(feld, von, bis, neu, zeigerAuf, zeigerAuf);
-  }
-
-  var KNOEPFE = [
-    { klasse: 'is-fett', titel: 'Fett', inhalt: 'F', tun: function (f) { umschliessen(f, '**'); } },
-    { klasse: 'is-kursiv', titel: 'Kursiv', inhalt: 'K', tun: function (f) { umschliessen(f, '*'); } },
-    { klasse: 'is-unter', titel: 'Unterstrichen', inhalt: 'U', tun: function (f) { umschliessen(f, '__'); } },
-    { klasse: 'is-link', titel: 'Link', inhalt: '🔗', tun: linkEinsetzen },
-    { klasse: 'is-liste', titel: 'Aufzählung', inhalt: '•', liste: true,
-      tun: function (f) { zeilenweise(f, function () { return '- '; }); } },
-    { klasse: 'is-nummern', titel: 'Nummerierte Liste', inhalt: '1.', liste: true,
-      tun: function (f) { zeilenweise(f, function (n) { return n + '. '; }); } }
-  ];
+  var ERLAUBT = {
+    B: 'strong', STRONG: 'strong', I: 'em', EM: 'em', U: 'u',
+    A: 'a', UL: 'ul', OL: 'ol', LI: 'li', BR: 'br', DIV: 'div', P: 'div'
+  };
 
   /**
-   * Die Leiste zu einem Schreibfeld.
+   * Alles wegräumen, was nicht zu den sechs Auszeichnungen gehört.
+   *
+   * Das ist KEINE Vorsichtsmaßnahme gegen die eigene Familie, sondern gegen
+   * die Zwischenablage. Wer etwas aus WhatsApp, Word oder einer Webseite
+   * hereinkopiert, bringt Schriftarten, Farben, Tabellen und leere Container
+   * mit. Ohne Aussieben sähe die Pinnwand nach drei Einfügungen aus wie fünf
+   * verschiedene Webseiten.
+   *
+   * Unbekannte Elemente werden AUFGELÖST, nicht gelöscht: der Text darin
+   * bleibt. Etwas verschwinden zu lassen, das jemand gerade eingefügt hat,
+   * wäre die schlimmere Überraschung.
+   */
+  function saeubern(wurzel) {
+    var kinder = Array.prototype.slice.call(wurzel.childNodes);
+    kinder.forEach(function (knoten) {
+      if (knoten.nodeType === 3) return;                       // Text bleibt
+      if (knoten.nodeType !== 1) { wurzel.removeChild(knoten); return; }
+
+      var name = ERLAUBT[knoten.tagName];
+      if (!name) {
+        // Auflösen: die Kinder rücken an die Stelle des Elements.
+        saeubern(knoten);
+        while (knoten.firstChild) wurzel.insertBefore(knoten.firstChild, knoten);
+        wurzel.removeChild(knoten);
+        return;
+      }
+
+      saeubern(knoten);
+
+      // Attribute weg — bis auf ein Linkziel, das man anklicken darf.
+      var behalten = null;
+      if (name === 'a') {
+        var href = adresseOk(knoten.getAttribute('href'));
+        if (!href) {
+          while (knoten.firstChild) wurzel.insertBefore(knoten.firstChild, knoten);
+          wurzel.removeChild(knoten);
+          return;
+        }
+        behalten = href;
+      }
+      Array.prototype.slice.call(knoten.attributes).forEach(function (a) {
+        knoten.removeAttribute(a.name);
+      });
+      if (behalten) {
+        knoten.setAttribute('href', behalten);
+        knoten.setAttribute('target', '_blank');
+        knoten.setAttribute('rel', 'noopener noreferrer');
+      }
+
+      // `<b>` und `<i>` kommen von `execCommand`; vereinheitlichen, damit die
+      // Umwandlung nur eine Schreibweise kennen muss.
+      if (knoten.tagName.toLowerCase() !== name) {
+        var neu = document.createElement(name);
+        while (knoten.firstChild) neu.appendChild(knoten.firstChild);
+        if (behalten) {
+          neu.setAttribute('href', behalten);
+          neu.setAttribute('target', '_blank');
+          neu.setAttribute('rel', 'noopener noreferrer');
+        }
+        wurzel.replaceChild(neu, knoten);
+      }
+    });
+  }
+
+  /** Aus dem sichtbaren Bereich wieder Text machen. */
+  function alsMarkup(wurzel) {
+    var raus = '';
+
+    function inhalt(knoten) {
+      var s = '';
+      Array.prototype.slice.call(knoten.childNodes).forEach(function (k) { s += stueck(k); });
+      return s;
+    }
+
+    function stueck(knoten) {
+      if (knoten.nodeType === 3) return knoten.nodeValue;
+      if (knoten.nodeType !== 1) return '';
+      switch (knoten.tagName) {
+        case 'BR': return '\n';
+        case 'STRONG': case 'B': return '**' + inhalt(knoten) + '**';
+        case 'EM': case 'I': return '*' + inhalt(knoten) + '*';
+        case 'U': return '__' + inhalt(knoten) + '__';
+        case 'A': return '[' + inhalt(knoten) + '](' + (knoten.getAttribute('href') || '') + ')';
+        case 'LI': return inhalt(knoten);
+        default: return inhalt(knoten);
+      }
+    }
+
+    Array.prototype.slice.call(wurzel.childNodes).forEach(function (knoten) {
+      if (knoten.nodeType === 1 && (knoten.tagName === 'UL' || knoten.tagName === 'OL')) {
+        var nummer = 0;
+        Array.prototype.slice.call(knoten.children).forEach(function (li) {
+          nummer++;
+          raus += (knoten.tagName === 'UL' ? '- ' : nummer + '. ') + inhalt(li) + '\n';
+        });
+        return;
+      }
+      if (knoten.nodeType === 1 && knoten.tagName === 'DIV') {
+        // Ein leeres <div> ist eine Leerzeile — der Browser baut sie beim
+        // Drücken der Eingabetaste so.
+        raus += inhalt(knoten) + '\n';
+        return;
+      }
+      raus += stueck(knoten);
+    });
+
+    // Der Browser hängt am Ende gern noch ein leeres <div> an.
+    return raus.replace(/\n+$/, '');
+  }
+
+  /**
+   * Der Bereich zu einem Textfeld.
    *
    * `opts.listen === false` lässt die beiden Listen-Knöpfe weg — für Felder,
-   * die schon eine Liste SIND. Zutaten und Zubereitungsschritte werden Zeile
-   * für Zeile zu Listenpunkten; dort wäre ein „- " im Text nur ein Strich,
-   * der vor dem Punkt steht.
+   * die schon eine Liste SIND (Zutaten, Zubereitungsschritte).
    */
-  text.werkzeuge = function (feld, opts) {
+  text.feld = function (feld, opts) {
     var mitListen = !opts || opts.listen !== false;
-    var leiste = el('div', { class: 'schreibhilfe' });
+    var bereich = el('div', {
+      class: 'schreibbereich', contenteditable: 'true', role: 'textbox',
+      'aria-multiline': 'true',
+      'data-platzhalter': feld.getAttribute('placeholder') || ''
+    });
+    feld.classList.add('visually-hidden');
+    feld.setAttribute('tabindex', '-1');
+    feld.setAttribute('aria-hidden', 'true');
 
+    var grenze = parseInt(feld.getAttribute('maxlength'), 10) || 0;
+    var stillstand = false;
+
+    function ausFeld() {
+      stillstand = true;
+      bereich.textContent = '';
+      bereich.appendChild(text.block(feld.value || ''));
+      stillstand = false;
+    }
+
+    function insFeld() {
+      if (stillstand) return;
+      saeubern(bereich);
+      var wert = alsMarkup(bereich);
+      /*
+       * `maxlength` gilt für Textfelder, nicht für einen Schreibbereich.
+       *
+       * Ohne diese Zeile ließe sich beliebig viel tippen, und abgelehnt würde
+       * es erst von der Datenbank — nach dem Absenden, mit einer Meldung, die
+       * niemandem sagt, was zu tun ist. Genau so ein Fall war der rohe
+       * Postgres-Fehler bei „4113 Portionen".
+       */
+      if (grenze && wert.length > grenze) {
+        wert = wert.slice(0, grenze);
+        ausFeld();
+      }
+      ROH_WERT.set.call(feld, wert);
+      feld.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
+    /*
+     * Den Wert des Feldes abfangen.
+     *
+     * Die Formulare setzen `nodes.fBody.value = …` beim Öffnen und leeren es
+     * nach dem Absenden. Ohne diesen Zugriff bliebe der sichtbare Bereich
+     * dabei stehen, wie er war — man öffnete ein Rezept zum Ändern und sähe
+     * das vorige.
+     */
+    Object.defineProperty(feld, 'value', {
+      configurable: true,
+      get: function () { return ROH_WERT.get.call(feld); },
+      set: function (v) { ROH_WERT.set.call(feld, v == null ? '' : v); ausFeld(); }
+    });
+
+    bereich.addEventListener('input', insFeld);
+    bereich.addEventListener('blur', insFeld);
+
+    /*
+     * Eingefügtes zuerst zu Text machen, dann selbst auszeichnen.
+     *
+     * Der Browser fügt sonst den kompletten HTML-Baum der Quelle ein. Das
+     * Aussieben repariert das zwar hinterher, aber für einen Wimpernschlag
+     * steht die fremde Formatierung im Bereich und das Fenster springt.
+     */
+    bereich.addEventListener('paste', function (e) {
+      e.preventDefault();
+      var eingefuegt = (e.clipboardData || global.clipboardData).getData('text/plain');
+      document.execCommand('insertText', false, eingefuegt);
+    });
+
+    ausFeld();
+
+    var leiste = el('div', { class: 'schreibhilfe' });
     KNOEPFE.forEach(function (knopf) {
       if (knopf.liste && !mitListen) return;
       leiste.appendChild(el('button', {
@@ -348,55 +476,69 @@
         class: 'schreibhilfe__knopf ' + knopf.klasse,
         title: knopf.titel,
         'aria-label': knopf.titel,
-        // `mousedown` verhindern, sonst verliert das Textfeld die Auswahl,
-        // bevor der Knopf sie überhaupt lesen kann.
+        // Ohne das verliert der Schreibbereich beim Antippen die Markierung,
+        // und der Knopf wüsste nicht mehr, worauf er sich beziehen soll.
         onmousedown: function (e) { e.preventDefault(); },
-        onclick: function () { knopf.tun(feld); }
+        onclick: function () {
+          bereich.focus();
+          knopf.tun();
+          insFeld();
+        }
       }, [knopf.inhalt]));
     });
 
-    return leiste;
+    return el('div', { class: 'schreibfeld' }, [leiste, bereich, feld]);
   };
 
-  /**
-   * Die Vorschau unter dem Feld — sie zeigt sich nur, wenn es etwas zu zeigen
-   * gibt.
-   */
-  text.vorschau = function (feld) {
-    var box = el('div', { class: 'schreibvorschau' });
-
-    function auffrischen() {
-      var wert = feld.value || '';
-      if (!text.hatAuszeichnung(wert)) {
-        box.className = 'schreibvorschau';
-        box.textContent = '';
-        return;
-      }
-      box.className = 'schreibvorschau is-da';
-      box.textContent = '';
-      box.appendChild(el('span', { class: 'schreibvorschau__marke', text: 'So sieht es aus:' }));
-      var inhalt = el('div', { class: 'schreibvorschau__inhalt' });
-      inhalt.appendChild(text.block(wert));
-      box.appendChild(inhalt);
-    }
-
-    feld.addEventListener('input', auffrischen);
-    auffrischen();
-    return box;
-  };
-
-  /**
-   * Leiste, Feld und Vorschau in einem Rahmen — der Aufruf bleibt eine Zeile.
+  /*
+   * `execCommand` ist offiziell veraltet — und die einzige Möglichkeit, die
+   * überall funktioniert.
    *
-   * Ein Rahmen statt „hinter dem Feld einhängen": die Formulare hier bauen
-   * ihre Kinder als Liste auf, und da gibt es zum Zeitpunkt des Aufrufs noch
-   * gar kein Elternelement, in das man etwas einfügen könnte.
+   * Der Nachfolger heißt `Highlight`/`EditContext` und wird noch nicht von
+   * genug Browsern unterstützt, um eine Familie darauf zu stellen. Alles selbst
+   * zu machen hieße, Auswahl, Verschachtelung und Rückgängig von Hand zu
+   * verwalten — deutlich mehr Code und deutlich mehr Wege, es falsch zu machen.
    */
-  text.feld = function (feld, opts) {
-    return el('div', { class: 'schreibfeld' }, [
-      text.werkzeuge(feld, opts), feld, text.vorschau(feld)
-    ]);
-  };
+  function befehl(name, wert) {
+    try {
+      // Ohne das setzt der Browser `<span style="font-weight:bold">` statt
+      // `<b>`, und das Aussieben würde die Auszeichnung anschließend wegwerfen.
+      document.execCommand('styleWithCSS', false, false);
+    } catch (error) { /* nicht überall vorhanden, dann eben nicht */ }
+    document.execCommand(name, false, wert === undefined ? null : wert);
+  }
+
+  function linkSetzen() {
+    var auswahl = global.getSelection && global.getSelection().toString();
+    var ziel = global.prompt('Wohin soll der Link führen?', 'https://');
+    if (!ziel) return;
+    if (!adresseOk(ziel)) {
+      PS.toast('Das sieht nicht nach einer Web-Adresse aus.', 'error');
+      return;
+    }
+    if (!auswahl) {
+      // Ohne Markierung gäbe es nichts, worauf der Link liegen könnte.
+      befehl('insertText', ziel);
+      var s = global.getSelection();
+      if (s && s.rangeCount) {
+        var r = s.getRangeAt(0);
+        r.setStart(r.endContainer, Math.max(0, r.endOffset - ziel.length));
+        s.removeAllRanges(); s.addRange(r);
+      }
+    }
+    befehl('createLink', ziel);
+  }
+
+  var KNOEPFE = [
+    { klasse: 'is-fett', titel: 'Fett', inhalt: 'F', tun: function () { befehl('bold'); } },
+    { klasse: 'is-kursiv', titel: 'Kursiv', inhalt: 'K', tun: function () { befehl('italic'); } },
+    { klasse: 'is-unter', titel: 'Unterstrichen', inhalt: 'U', tun: function () { befehl('underline'); } },
+    { klasse: 'is-link', titel: 'Link', inhalt: '🔗', tun: linkSetzen },
+    { klasse: 'is-liste', titel: 'Aufzählung', inhalt: '•', liste: true,
+      tun: function () { befehl('insertUnorderedList'); } },
+    { klasse: 'is-nummern', titel: 'Nummerierte Liste', inhalt: '1.', liste: true,
+      tun: function () { befehl('insertOrderedList'); } }
+  ];
 
   PS.text = text;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

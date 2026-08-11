@@ -2611,8 +2611,14 @@ print(json.dumps({
   await context.close();
 }
 
-// --- 6m. Textauszeichnung: die Knopfleiste ----------------------------------
+// --- 6m. der Schreibbereich: was man sieht, ist das Ergebnis ---------------
 {
+  /*
+   * Hier stand einmal ein Textfeld mit sichtbaren Marken und einer Vorschau
+   * darunter. Rückmeldung aus der Familie, sinngemäß: „das führt zu massivem
+   * Unverständnis" — zu Recht. Geprüft wird jetzt, dass beim Schreiben nirgends
+   * eine Marke auftaucht und trotzdem das Richtige gespeichert wird.
+   */
   const context = await browser.newContext({ viewport: { width: 900, height: 900 } });
   const page = await context.newPage();
   const errors = [];
@@ -2621,68 +2627,127 @@ print(json.dumps({
   const back = makeBackend();
   await stub(page, back);
   await page.goto(origin + '/board.html' + SESSION);
-  await page.waitForSelector('.compose .schreibhilfe');
+  await page.waitForSelector('.compose .schreibbereich');
 
-  const feld = '.compose textarea';
-  const wert = () => page.inputValue(feld);
+  const BEREICH = '.compose .schreibbereich';
+  /** Was im unsichtbaren Feld steht — also das, was gespeichert würde. */
+  const gespeichert = () => page.$eval('.compose textarea', (t) => t.value);
+  /** Was der Mensch sieht. */
+  const sichtbar = () => page.$eval(BEREICH, (d) => d.textContent);
+  const html = () => page.$eval(BEREICH, (d) => d.innerHTML);
 
-  // Auswahl umschließen.
-  await page.fill(feld, 'Oma ist da');
-  await page.evaluate((s) => document.querySelector(s).setSelectionRange(0, 3),
-    '.compose textarea');
+  await page.click(BEREICH);
+  await page.keyboard.type('Oma ist da');
+  await page.keyboard.down('Shift');
+  // Zwei Zeichen, nicht drei: die letzten drei von „Oma ist da" wären „ da",
+  // und dann stünde das Leerzeichen mit in der Auszeichnung.
+  for (let i = 0; i < 2; i++) await page.keyboard.press('ArrowLeft');
+  await page.keyboard.up('Shift');
   await page.click('.compose .is-fett');
-  check('schreibhilfe: Fett legt sich um die Auswahl', (await wert()) === '**Oma** ist da', await wert());
 
-  // Nochmal derselbe Knopf nimmt sie wieder ab, statt sie zu verdoppeln.
-  await page.click('.compose .is-fett');
-  check('schreibhilfe: nochmal Fett nimmt sie wieder ab', (await wert()) === 'Oma ist da', await wert());
+  check('bereich: der Text wird wirklich fett gezeigt',
+    (await html()).includes('<strong>') || (await html()).includes('<b>'), await html());
+  check('bereich: gespeichert wird die Auszeichnung',
+    (await gespeichert()) === 'Oma ist **da**', JSON.stringify(await gespeichert()));
+  /*
+   * DER EIGENTLICHE PUNKT DER GANZEN ÄNDERUNG.
+   *
+   * Im Sichtbaren darf keine einzige Marke stehen. Genau das war die
+   * Beschwerde, und genau das prüft diese Zeile.
+   */
+  check('bereich: im Sichtbaren steht KEINE Marke',
+    !/\*\*|__|\[.+\]\(/.test(await sichtbar()), JSON.stringify(await sichtbar()));
+  check('bereich: es gibt keine Vorschau mehr',
+    (await page.locator('.schreibvorschau').count()) === 0);
 
-  // Ohne Auswahl: Marken einsetzen und den Zeiger dazwischen stellen.
-  await page.fill(feld, '');
-  await page.click('.compose .is-kursiv');
-  await page.type(feld, 'so');
-  check('schreibhilfe: ohne Auswahl schreibt man zwischen die Marken',
-    (await wert()) === '*so*', await wert());
+  // Kursiv und unterstrichen über dieselbe Mechanik.
+  for (const [knopf, marke, tag] of [['is-kursiv', '*', 'em'], ['is-unter', '__', 'u']]) {
+    await page.$eval('.compose textarea', (t) => { t.value = ''; });
+    await page.click(BEREICH);
+    await page.keyboard.type('sehr');
+    await page.keyboard.press('Home');
+    await page.keyboard.down('Shift');
+    for (let i = 0; i < 4; i++) await page.keyboard.press('ArrowRight');
+    await page.keyboard.up('Shift');
+    await page.click('.compose .' + knopf);
+    check('bereich: ' + knopf + ' ergibt <' + tag + '> und speichert ' + marke,
+      (await gespeichert()) === marke + 'sehr' + marke, JSON.stringify(await gespeichert()));
+    check('bereich: ' + knopf + ' zeigt keine Marke',
+      (await sichtbar()) === 'sehr', JSON.stringify(await sichtbar()));
+  }
 
-  // Listen: jede angefasste Zeile bekommt ihr Zeichen.
-  await page.fill(feld, 'Milch\nBrot\nEier');
-  await page.evaluate((s) => document.querySelector(s).setSelectionRange(0, 15),
-    '.compose textarea');
+  // Aufzählung
+  await page.$eval('.compose textarea', (t) => { t.value = ''; });
+  await page.click(BEREICH);
+  await page.keyboard.type('Milch');
   await page.click('.compose .is-liste');
-  check('schreibhilfe: Aufzählung kennzeichnet jede Zeile',
-    (await wert()) === '- Milch\n- Brot\n- Eier', JSON.stringify(await wert()));
-
-  await page.evaluate((s) => document.querySelector(s).setSelectionRange(0, 21),
-    '.compose textarea');
-  await page.click('.compose .is-nummern');
-  check('schreibhilfe: Nummerierung zählt hoch und ersetzt die Striche',
-    (await wert()) === '1. Milch\n2. Brot\n3. Eier', JSON.stringify(await wert()));
-
-  // Der Link-Knopf stellt den Zeiger dorthin, wo die Adresse hingehört.
-  await page.fill(feld, '');
-  await page.click('.compose .is-link');
-  await page.type(feld, 'example.com');
-  check('schreibhilfe: der Zeiger landet hinter https://',
-    (await wert()) === '[Text](https://example.com)', await wert());
+  check('bereich: die Aufzählung wird als Liste gezeigt',
+    (await html()).includes('<ul>') || (await html()).includes('<ul '), await html());
+  check('bereich: und als „- " gespeichert',
+    (await gespeichert()) === '- Milch', JSON.stringify(await gespeichert()));
 
   /*
-   * Die Vorschau.
-   *
-   * Sie ist der Grund, warum ein Textfeld mit Marken überhaupt zumutbar ist:
-   * niemand muss raten, was `**so**` wird. Aber sie zeigt sich erst, wenn es
-   * etwas zu zeigen gibt — wer einfach nur schreibt, soll kein zweites Feld
-   * unter dem ersten sehen.
+   * Vorhandener Text muss beim Öffnen wieder als Formatierung erscheinen —
+   * sonst sähe man beim Ändern eines Rezepts plötzlich die Sternchen.
    */
-  await page.fill(feld, 'ganz normaler Satz');
-  check('vorschau: bei gewöhnlichem Text bleibt sie weg',
-    !(await page.locator('.compose .schreibvorschau').first().isVisible()));
+  await page.$eval('.compose textarea', (t) => { t.value = 'Das ist **wichtig**'; });
+  check('bereich: gespeicherter Text kommt formatiert zurück, nicht als Marken',
+    (await sichtbar()) === 'Das ist wichtig' &&
+    ((await html()).includes('<strong>') || (await html()).includes('<b>')),
+    JSON.stringify(await sichtbar()) + ' / ' + await html());
 
-  await page.fill(feld, 'jetzt **fett**');
-  await page.waitForSelector('.compose .schreibvorschau.is-da');
-  check('vorschau: sobald etwas ausgezeichnet ist, zeigt sie das Ergebnis',
-    (await page.locator('.compose .schreibvorschau strong').textContent()) === 'fett');
+  /*
+   * EINGEFÜGTES.
+   *
+   * Der praktische Grund für das Aussieben: ein Absatz aus einer Webseite
+   * bringt Schriftarten, Farben und fremde Elemente mit. Behielte man die,
+   * sähe die Pinnwand nach drei Einfügungen aus wie fünf Webseiten.
+   */
+  await page.$eval('.compose textarea', (t) => { t.value = ''; });
+  await page.evaluate((sel) => {
+    const d = document.querySelector(sel);
+    d.focus();
+    d.innerHTML = '<span style="color:red;font-size:40px">rot und riesig</span>' +
+      '<table><tr><td>Tabelle</td></tr></table>' +
+      '<script>window.__boese = 1<\/script>' +
+      '<b>fett bleibt</b>';
+    d.dispatchEvent(new Event('input', { bubbles: true }));
+  }, BEREICH);
+  const nachher = await html();
+  check('bereich: fremde Formatierung wird ausgesiebt',
+    !/style=|<table|<script|font-size/i.test(nachher), nachher);
+  check('bereich: der Text daraus bleibt aber stehen',
+    (await sichtbar()).includes('rot und riesig') && (await sichtbar()).includes('Tabelle'),
+    JSON.stringify(await sichtbar()));
+  check('bereich: und Fett aus der Zwischenablage überlebt',
+    (await gespeichert()).includes('**fett bleibt**'), JSON.stringify(await gespeichert()));
+  check('bereich: eingeschleustes Skript läuft nicht',
+    (await page.evaluate(() => window.__boese)) === undefined);
 
-  check('schreibhilfe: keine Fehler', errors.length === 0, errors.join('\n'));
+  // Die Längengrenze des Feldes gilt auch hier — sonst lehnt erst die
+  // Datenbank ab, nach dem Absenden, mit einer unverständlichen Meldung.
+  await page.$eval('.compose textarea', (t) => { t.value = ''; });
+  await page.evaluate((sel) => {
+    const d = document.querySelector(sel);
+    d.focus();
+    d.textContent = 'x'.repeat(2500);
+    d.dispatchEvent(new Event('input', { bubbles: true }));
+  }, BEREICH);
+  check('bereich: die Längengrenze des Feldes wird eingehalten',
+    (await gespeichert()).length === 2000, String((await gespeichert()).length));
+
+  /*
+   * Eine Meldung ist hier ERWARTET und gehört nicht zu den Fehlern.
+   *
+   * Der Einfüge-Test schreibt absichtlich ein `style="color:red"` in die Seite.
+   * Die Sicherheitsrichtlinie erlaubt keine eingebetteten Stile, also weigert
+   * sich der Browser, es anzuwenden, und schreibt das in die Konsole. Das ist
+   * die Richtlinie bei der Arbeit, kein Defekt — nachgemessen: keiner der fünf
+   * Knöpfe löst eine solche Meldung aus, das Aussieben entfernt das Attribut
+   * ohnehin.
+   */
+  const echte = errors.filter((e) => !/Content Security Policy/.test(e));
+  check('bereich: keine Fehler', echte.length === 0, echte.join('\n'));
   await context.close();
 }
 
