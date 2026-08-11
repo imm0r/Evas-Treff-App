@@ -64,7 +64,7 @@
     nodes.compose = el('div', { class: 'compose' }, [
       el('div', { class: 'whorow' }, [nodes.whoFace, nodes.whoLabel, nodes.whoButton]),
       nodes.name,
-      nodes.text,
+      PS.text.feld(nodes.text),
       nodes.picked,
       el('div', { class: 'compose__actions' }, [
         el('button', { class: 'btn', onclick: function () { nodes.file.click(); } }, ['📷 Bild']),
@@ -163,7 +163,7 @@
           el('span', { class: 'post__who', text: PS.people.display(post.author) }),
           el('span', { class: 'post__when', text: PS.formatWhen(post.at) })
         ]),
-        el('p', { class: 'post__text', text: post.body })
+        el('div', { class: 'post__text' }, [PS.text.block(post.body)])
       ]);
 
       var face = PS.people.avatar(post.author, 32);

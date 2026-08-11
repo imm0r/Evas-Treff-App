@@ -36,9 +36,23 @@ async function rest(pfad: string, init: RequestInit = {}) {
   });
 }
 
-/** Aus dem Fließtext eine Zeile machen, die auf einen Sperrbildschirm passt. */
+/**
+ * Aus dem Fließtext eine Zeile machen, die auf einen Sperrbildschirm passt.
+ *
+ * Die Auszeichnungen müssen dabei WEG. Eine Mitteilung wird als Text mit
+ * `**fett**` gespeichert; auf einem Sperrbildschirm gibt es kein Fett, dort
+ * stünden dann vier Sternchen, die niemand getippt hat. Dieselben Regeln wie
+ * `PS.text.roh()` in `app/js/text.js` — nur an einem Ort, den dieselbe Datei
+ * nicht erreichen kann.
+ */
 function kurz(text: string, max: number) {
-  const eine = String(text || '').replace(/\s+/g, ' ').trim();
+  const eine = String(text || '')
+    .replace(/\[([^\]\n]+)\]\(([^)\s]+)\)/g, '$1')
+    .replace(/\*\*([^*\n]+)\*\*/g, '$1')
+    .replace(/__([^_\n]+)__/g, '$1')
+    .replace(/\*([^*\n]+)\*/g, '$1')
+    .replace(/^\s*-\s+/gm, '')
+    .replace(/\s+/g, ' ').trim();
   return eine.length > max ? eine.slice(0, max - 1) + '…' : eine;
 }
 

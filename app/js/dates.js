@@ -163,7 +163,7 @@
       card.appendChild(el('p', { class: 'date__host', text: 'von ' + PS.people.display(item.host) }));
     }
     if (item.place) card.appendChild(el('p', { class: 'date__place', text: '📍 ' + item.place }));
-    if (item.note) card.appendChild(el('p', { class: 'date__note', text: item.note }));
+    if (item.note) card.appendChild(el('div', { class: 'date__note' }, [PS.text.block(item.note)]));
 
     card.appendChild(replyRow(item));
     card.appendChild(guestList(item));
@@ -275,7 +275,7 @@
         el('label', { class: 'label', text: 'Geht über mehrere Tage? Dann bis:' }),
         nodes.until,
         nodes.place,
-        nodes.note,
+        PS.text.feld(nodes.note),
         el('div', { class: 'confirm__actions' }, [
           el('button', { class: 'btn', onclick: closeForm }, ['Abbrechen']),
           nodes.save

@@ -724,7 +724,7 @@
     });
     nodes.commentSend = el('button', { class: 'btn btn--primary', onclick: postComment }, ['Senden']);
     nodes.commentForm = el('div', { class: 'comments__form' }, [
-      nodes.commentWho, nodes.commentName, nodes.commentText, nodes.commentSend
+      nodes.commentWho, nodes.commentName, PS.text.feld(nodes.commentText), nodes.commentSend
     ]);
     nodes.commentNote = el('p', { class: 'comments__note is-hidden' });
 
@@ -793,7 +793,7 @@
 
     var me = PS.name();
     item.comments.forEach(function (comment) {
-      var body = el('p', { class: 'comment__text' });
+      var body = el('div', { class: 'comment__text' });
       var head = el('div', { class: 'comment__head' }, [
         el('span', { class: 'comment__who', text: PS.people.display(comment.author) }),
         el('span', { class: 'comment__when', text: PS.formatWhen(comment.at) })
@@ -810,7 +810,7 @@
       }
       nodes.commentList.appendChild(row);
 
-      body.textContent = comment.body;
+      body.appendChild(PS.text.block(comment.body));
     });
 
     nodes.commentName.value = PS.name();

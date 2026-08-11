@@ -255,7 +255,7 @@
     var card = el('article', {
       class: 'aushang' + (item.unread ? ' is-new' : '')
     }, [
-      el('p', { class: 'aushang__text', text: item.body }),
+      el('div', { class: 'aushang__text' }, [PS.text.block(item.body)]),
       el('p', { class: 'aushang__meta', text: meta.join(' · ') })
     ]);
 
@@ -288,7 +288,8 @@
     // Sagen, was wirklich passiert, und WELCHE es trifft. „Diese Mitteilung
     // entfernen?" verschweigt beides — und wer mehrere untereinander stehen
     // hat, weiß sonst nicht, an welcher er gerade gezogen hat.
-    var kurz = item.body.replace(/\s+/g, ' ').slice(0, 60);
+    // Ohne Auszeichnung: die Rückfrage soll den Satz zitieren, nicht seine Sternchen.
+    var kurz = PS.text.roh(item.body).replace(/\s+/g, ' ').slice(0, 60);
     if (item.body.length > 60) kurz += ' …';
     if (!global.confirm(
       'Diese Mitteilung für ALLE löschen?\n\n„' + kurz + '"\n\n' +
@@ -352,7 +353,7 @@
         href: 'index.html?album=' + encodeURIComponent(item.album)
       }, [
         el('span', { class: 'neuigkeit__wer', text: PS.people.display(item.author) }),
-        el('span', { class: 'neuigkeit__wort', text: item.body })
+        el('span', { class: 'neuigkeit__wort', text: PS.text.roh(item.body) })
       ]);
     });
     return block('💬', PS.plural(news.comments.count, 'Neuer Kommentar', 'Neue Kommentare'), rows);
@@ -363,7 +364,7 @@
     var rows = news.posts.items.map(function (item) {
       return el('a', { class: 'neuigkeit__zeile', href: 'board.html' }, [
         el('span', { class: 'neuigkeit__wer', text: PS.people.display(item.author) }),
-        el('span', { class: 'neuigkeit__wort', text: item.body })
+        el('span', { class: 'neuigkeit__wort', text: PS.text.roh(item.body) })
       ]);
     });
     return block('📌', PS.plural(news.posts.count, 'Neuer Pinnwandbeitrag', 'Neue Pinnwandbeiträge'), rows);
@@ -409,7 +410,7 @@
     nodes.form = el('div', { class: 'confirm is-hidden' }, [
       el('div', { class: 'confirm__box' }, [
         el('h2', { class: 'confirm__title', text: 'Mitteilung an die Familie' }),
-        nodes.fBody,
+        PS.text.feld(nodes.fBody),
         el('label', { class: 'label', text: 'Bis wann ist das aktuell? (optional)' }),
         nodes.fUntil,
         el('p', { class: 'hint', text:
