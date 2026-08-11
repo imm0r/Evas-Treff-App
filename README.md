@@ -23,9 +23,9 @@ auch die Geburtstage).
 
 ---
 
-A family hub for a couple of dozen relatives: photo albums (videos too), dates
-and birthdays, a pinboard, recipes, and the guest list that decides who may see
-any of it. A static page on GitHub Pages in
+A family hub for a couple of dozen relatives: announcements, photo albums
+(videos too), dates and birthdays, a pinboard, recipes, and the guest list that
+decides who may see any of it. A static page on GitHub Pages in
 front of a Supabase project.
 
 ```
@@ -125,6 +125,29 @@ family cooks Kartoffelsalat twice, but the slug is unique because it is in the
 URL. The second one used to get *„Das gibt es schon."* and a dead end; now it
 becomes `-2`. On the server's refusal rather than a lookup first: two people
 creating at the same moment would both pass a lookup and one would still fail.
+
+**The news page interrupts you, and that is the point.** A pinboard post waits
+to be found; an announcement stands in the way. That difference is the whole
+feature — so announcements are admin-only, because a post that stops eleven
+people is not the same thing as one they scroll past.
+
+Entering the site checks once and steps aside to `neues.html` when there is
+something. Only *unread* things trigger it. An announcement can carry an
+"until" date, and then it stays readable on the page after you have seen it
+without ever stopping you again — otherwise the choice would be between the
+barbecue notice ambushing you daily and it vanishing after one glance.
+
+Below the announcements, what happened by itself: new photos, comments,
+recipes, events, all since your last visit and never your own doing. The page
+contains **only** what actually exists — no empty headings, no "0 new photos".
+A section with nothing in it is not rendered at all.
+
+It is one round trip, not five. `news_for_me()` answers the whole question in
+one call, `SECURITY INVOKER` so it sees exactly what the caller may see, and
+what "new" means lives in one place instead of being spread across five
+callers. The redirect is guarded by a session flag: if marking-as-seen ever
+failed, an unguarded check would bounce the family between two pages forever,
+and a broken news query must never block the albums.
 
 **Videos go up untouched, and the still frame is what makes that safe.**
 Photos are shrunk on the device; a video cannot be, so what was filmed is what
@@ -338,7 +361,8 @@ Three checks, all of which measure the code against something other than itself:
   put to the real Supabase without a session. *Every* one: it walks whatever is
   on `PS.data` rather than a hand-kept list, because the hand-kept list went
   stale the moment recipes were added and quietly went on checking the old
-  set. A stub can only confirm what it
+  set. Database functions are checked the same way — a renamed one answers 404,
+  and without this the family would be the ones to find out. A stub can only confirm what it
   was taught: it hands back canned JSON and never reads the `select`, so it
   cannot know whether PostgREST could answer it. This runs `app/js/data.js`
   itself, with a `PS` that records queries instead of sending them, and then

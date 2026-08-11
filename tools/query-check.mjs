@@ -40,6 +40,7 @@ const KEY = /key:\s*'([^']+)'/.exec(config)[1];
 const UUID = '00000000-0000-0000-0000-000000000000';
 
 const asked = [];
+let funktionen = 0;
 
 /**
  * Ein PS, das sich wie das echte verhält, aber nichts verschickt.
@@ -54,6 +55,25 @@ function makeSandbox() {
       // Treffer gibt" nie betreten, und genau dort steht oft die zweite
       // Abfrage. Der Inhalt ist egal — mitgeschrieben wird die Frage.
       select: async (table, query) => { asked.push({ table, query }); return [{}]; },
+      /*
+       * Datenbankfunktionen gehören genauso geprüft wie Abfragen — eine
+       * umbenannte oder gelöschte Funktion antwortet mit 404, und das merkt
+       * sonst erst die Familie beim Betreten der Seite.
+       *
+       * Die Antwort muss die Form haben, die `data.news()` erwartet, sonst
+       * bricht sie hier ab, bevor sie das Unterschreiben der Vorschaubilder
+       * erreicht.
+       */
+      rpc: async (name) => {
+        asked.push({ rpc: name });
+        var leer = { count: 0, items: [] };
+        return {
+          since: null,
+          announcements: { unread: 0, items: [] },
+          photos: { count: 0, albums: [] },
+          comments: leer, posts: leer, recipes: leer, events: leer
+        };
+      },
       insert: async () => [{}],
       patch: async () => undefined,
       remove: async () => undefined,
@@ -117,7 +137,32 @@ if (!asked.length) {
 let failed = 0;
 const seen = new Set();
 
-for (const { table, query } of asked) {
+for (const eintrag of asked) {
+  if (eintrag.rpc) {
+    // Ohne Sitzung darf sie ablehnen — sie muss nur DA sein. 404 (PGRST202)
+    // heißt "gibt es nicht", alles andere heißt "gibt es".
+    const url = URL_BASE + '/rest/v1/rpc/' + eintrag.rpc;
+    let status = 0, body = '';
+    try {
+      const response = await fetch(url, {
+        method: 'POST', headers: { apikey: KEY, 'Content-Type': 'application/json' }, body: '{}'
+      });
+      status = response.status;
+      body = await response.text();
+    } catch (error) {
+      body = 'nicht erreichbar: ' + error.message;
+    }
+    if (status === 404 || /PGRST202/.test(body)) {
+      console.log('FEHLT Funktion  ' + eintrag.rpc + '()');
+      console.log('      ' + status + ': ' + body.slice(0, 160));
+      failed++;
+    } else {
+      console.log('ok    Funktion  ' + eintrag.rpc + '() ist da (' + status + ')');
+    }
+    funktionen++;
+    continue;
+  }
+  const { table, query } = eintrag;
   const key = table + '?' + query;
   if (seen.has(key)) continue;
   seen.add(key);
@@ -161,7 +206,10 @@ for (const { table, query } of asked) {
 }
 
 console.log('');
+// Die Funktionen mitzählen, sonst behauptet die Schlusszeile weniger geprüft
+// zu haben, als sie geprüft hat.
+var geprueft = seen.size + funktionen;
 console.log(failed
-  ? failed + ' von ' + seen.size + ' Abfragen beantwortet Supabase nicht'
-  : seen.size + ' Abfragen, alle beantwortbar');
+  ? failed + ' von ' + geprueft + ' beantwortet Supabase nicht'
+  : geprueft + ' Abfragen und Funktionen, alle beantwortbar');
 process.exit(failed ? 1 : 0);

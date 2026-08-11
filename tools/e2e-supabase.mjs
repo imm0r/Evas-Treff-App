@@ -161,6 +161,19 @@ function makeBackend() {
     otpRequests: [], inserts: [], deletes: [], uploads: [], signCalls: 0,
     albums: [], photos: [], comments: [], people: [], board: [], invites: [],
     events: [], queries: [], reads: [], patches: [], recipes: [], recipePhotos: [],
+    deletes: [],
+    // Voreinstellung: gar nichts Neues. Jeder Abschnitt setzt sich hin, was er
+    // braucht — so kann kein Test versehentlich von den Daten eines anderen
+    // abhängen.
+    news: {
+      since: '2026-08-01T00:00:00Z',
+      announcements: { unread: 0, items: [] },
+      photos: { count: 0, albums: [] },
+      comments: { count: 0, items: [] },
+      posts: { count: 0, items: [] },
+      recipes: { count: 0, items: [] },
+      events: { count: 0, items: [] }
+    },
     profile: { id: 'user-1', email: 'ich@example.de', is_admin: true, person_id: 'p1',
       comments_seen_at: '2026-01-01T00:00:00Z', people: { name: 'Maria' } }
   };
@@ -387,6 +400,26 @@ async function stub(page, back) {
       const id = (url.searchParams.get('id') || '').replace('eq.', '');
       const hit = back.recipePhotos.find((x) => x.id === id);
       if (hit) Object.assign(hit, row);
+      return json(204, {});
+    }
+    if (p === '/rest/v1/rpc/news_for_me') {
+      return json(200, back.news);
+    }
+    if (p === '/rest/v1/announcements' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'announcements', row });
+      return json(201, [Object.assign({ id: 'an-neu' }, row)]);
+    }
+    if (p === '/rest/v1/announcements' && request.method() === 'DELETE') {
+      back.deletes.push({ table: 'announcements', query: url.search });
+      return json(204, {});
+    }
+    if (p === '/rest/v1/profiles' && request.method() === 'PATCH') {
+      // Vorher beantwortete dieser Zweig JEDE Methode gleich und schrieb
+      // nichts mit — auch das Zuordnen zu einem Gesicht war damit nie geprüft.
+      const row = JSON.parse(request.postData());
+      back.patches.push({ table: 'profiles', row, query: url.search });
+      Object.assign(back.profile, row);
       return json(204, {});
     }
     if (p === '/rest/v1/profiles') return json(200, [back.profile]);
@@ -1558,6 +1591,180 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await context.close();
 }
 
+// --- 6c. Neues: die Seite, die einen abfängt --------------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  images.set('evas-treff/n1_thumb.jpg', await makeJpeg(scratch, 200, 200, 90, 'A'));
+  images.set('evas-treff/n2_thumb.jpg', await makeJpeg(scratch, 200, 200, 190, 'B'));
+  await scratch.close();
+
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 9 }] }
+  ];
+  back.news = {
+    since: '2026-08-01T00:00:00Z',
+    announcements: {
+      unread: 1,
+      items: [
+        { id: 'an-1', body: 'Die Oma ist wieder zu Hause.', until: null,
+          author: 'Ben', at: '2026-08-10T09:00:00Z', unread: true },
+        { id: 'an-2', body: 'Grillfest am Samstag bei uns im Garten.', until: '2026-08-20',
+          author: 'Ben', at: '2026-08-02T09:00:00Z', unread: false }
+      ]
+    },
+    photos: { count: 4, albums: [
+      { slug: 'evas-treff', title: "Eva's Treff", count: 4, videos: 1,
+        thumbs: ['evas-treff/n1_thumb.jpg', 'evas-treff/n2_thumb.jpg'] }
+    ] },
+    comments: { count: 1, items: [{ author: 'Ines', body: 'Schöner Abend!', photo_id: 'ph-1', album: 'evas-treff' }] },
+    posts: { count: 0, items: [] },
+    recipes: { count: 1, items: [{ slug: 'omas-apfelkuchen', title: 'Omas Apfelkuchen', author: 'Maria' }] },
+    events: { count: 0, items: [] }
+  };
+
+  /*
+   * Der Kern des Wunsches: beim BETRETEN abgefangen werden, nicht erst wenn
+   * man selbst nachsieht.
+   */
+  await page.goto(origin + '/index.html' + SESSION);
+  await page.waitForURL(/neues\.html/, { timeout: 15000 });
+  await page.waitForSelector('.aushang');
+  check('neues: wer die Seite betritt, landet bei den Neuigkeiten', true);
+
+  // Oben die Mitteilung — der eigentliche Grund für die Seite.
+  check('neues: die Mitteilung steht ganz oben',
+    (await page.locator('.neues > *').first().evaluate((n) => n.className)).indexOf('aushang') >= 0 ||
+    (await page.locator('.aushang').first().textContent()).includes('Oma'),
+    await page.locator('.neues > *').first().evaluate((n) => n.className));
+  check('neues: ungelesen wird hervorgehoben, gelesen bleibt lesbar',
+    (await page.locator('.aushang.is-new').count()) === 1 &&
+    (await page.locator('.aushang').count()) === 2);
+  check('neues: der gültige Aushang nennt sein Datum',
+    (await page.locator('.aushang').nth(1).textContent()).includes('gilt bis'),
+    await page.locator('.aushang').nth(1).textContent());
+
+  // Darunter, was von selbst angefallen ist.
+  check('neues: neue Aufnahmen mit Vorschau',
+    (await page.locator('.neuigkeit__bilder img').count()) === 2);
+  // Ein Video ist kein Foto — dieselbe Regel wie beim Hochladen.
+  check('neues: und die Zählung trennt Fotos von Videos',
+    (await page.locator('.neuigkeit').first().textContent()).includes('3 Fotos und 1 Video'),
+    await page.locator('.neuigkeit').first().textContent());
+
+  // NUR was es gibt: Pinnwand und Termine sind leer, also stehen sie nicht da.
+  const rubriken = await page.locator('.neuigkeit__head').allTextContents();
+  check('neues: leere Rubriken erscheinen gar nicht erst',
+    rubriken.length === 3 && !rubriken.join('|').includes('Pinnwand') &&
+    !rubriken.join('|').includes('Termin'),
+    JSON.stringify(rubriken));
+
+  // Gesehen ist gesehen. Das Merken läuft absichtlich NACH dem Zeichnen und
+  // ohne darauf zu warten, also hier kurz nachfassen statt sofort zu urteilen.
+  for (let i = 0; i < 50 && !back.patches.some((x) => x.table === 'profiles'); i++) {
+    await page.waitForTimeout(100);
+  }
+  const merker = back.patches.filter((i) => i.table === 'profiles');
+  check('neues: das Gesehen-Datum wird gesetzt',
+    merker.length === 1 && !!merker[0].row.news_seen_at, JSON.stringify(merker));
+
+  await shot(page, '8-neues');
+
+  /*
+   * Und danach hält sie niemanden mehr auf. Ohne diese Sperre wäre eine
+   * Schleife möglich, die die Familie komplett aussperrt.
+   */
+  back.news.announcements.unread = 0;
+  back.news.photos = { count: 0, albums: [] };
+  back.news.comments = { count: 0, items: [] };
+  back.news.recipes = { count: 0, items: [] };
+  await page.goto(origin + '/index.html');
+  await page.waitForSelector('.tile, .status');
+  check('neues: beim nächsten Mal geht es direkt in die Alben',
+    !page.url().includes('neues.html'), page.url());
+
+  check('neues: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 6d. eine kaputte Neuigkeitsabfrage darf die Alben nicht blockieren -----
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const back = makeBackend();
+  await stub(page, back);
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 0 }] }
+  ];
+  // Die Funktion antwortet nicht. Die Alben müssen trotzdem aufgehen — sonst
+  // sperrt ein Nebenschauplatz die ganze App zu.
+  await page.route(SB + '/rest/v1/rpc/news_for_me', (route) => route.fulfill({
+    status: 500, headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: 'kaputt' })
+  }));
+
+  await page.goto(origin + '/index.html' + SESSION);
+  await page.waitForSelector('.topbar__title', { timeout: 15000 });
+  check('neues: fällt die Abfrage aus, geht es geradeaus in die Alben',
+    !page.url().includes('neues.html'), page.url());
+  await context.close();
+}
+
+// --- 6e. eine Mitteilung schreiben (nur Admins) -----------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const back = makeBackend();
+  await stub(page, back);
+
+  await page.goto(origin + '/neues.html' + SESSION);
+  await page.waitForSelector('.neues__tools');
+  await page.click('.neues__tools .btn');
+  await page.fill('.confirm textarea', 'Am Sonntag Kaffee bei Oma.');
+  await page.fill('.confirm input[type=date]', '2026-08-30');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForFunction(() => !document.querySelector('.confirm:not(.is-hidden)'));
+
+  const row = back.inserts.find((i) => i.table === 'announcements').row;
+  check('neues: die Mitteilung geht mit Text und Gültigkeit raus',
+    row.body === 'Am Sonntag Kaffee bei Oma.' && row.until === '2026-08-30' &&
+    row.created_by === 'user-1', JSON.stringify(row));
+
+  // Ohne Text gibt es nichts mitzuteilen.
+  const vorher = back.inserts.filter((i) => i.table === 'announcements').length;
+  await page.click('.neues__tools .btn');
+  await page.click('.confirm__actions .btn--primary');
+  await page.waitForSelector('.toast');
+  check('neues: ohne Text wird nichts ausgehängt',
+    back.inserts.filter((i) => i.table === 'announcements').length === vorher);
+  await context.close();
+}
+
+// --- 6f. ein normales Konto darf nichts aushängen ---------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const back = makeBackend();
+  back.profile = Object.assign({}, back.profile, { is_admin: false });
+  await stub(page, back);
+
+  await page.goto(origin + '/neues.html' + SESSION);
+  await page.waitForSelector('.neues');
+  // Der Knopf ist weg — die Datenbank sagt ohnehin nein, aber ein Knopf, der
+  // nur "geht nicht" kann, gehört nicht hin.
+  check('neues: ohne Adminrecht kein Schreibknopf',
+    (await page.locator('.neues__tools').count()) === 0);
+  await context.close();
+}
+
 // --- 7. nothing is reachable without a session -----------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
@@ -1570,7 +1777,7 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     return route.fulfill({ status: 401, headers: { 'Content-Type': 'application/json' }, body: '{}' });
   });
   for (const where of ['/index.html', '/upload.html', '/board.html', '/admin.html',
-    '/dates.html', '/rezepte.html']) {
+    '/dates.html', '/rezepte.html', '/neues.html']) {
     await page.goto(origin + where);
     await page.waitForSelector('.gate');
     await page.waitForTimeout(300);
