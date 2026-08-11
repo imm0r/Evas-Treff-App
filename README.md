@@ -137,6 +137,14 @@ something. Only *unread* things trigger it. An announcement can carry an
 without ever stopping you again — otherwise the choice would be between the
 barbecue notice ambushing you daily and it vanishing after one glance.
 
+There is no "close" on this page, and the button in the corner of an
+announcement is not one. It used to be a `×`, which everybody reads as dismiss —
+it deletes the announcement for the whole family. It is a bin now, its tooltip
+says so, and the confirmation says "für ALLE", quotes the opening words so you
+know which one you pulled at, and points out that it vanishes for people who
+have not read it yet. You leave the page by going to the albums; it stops
+holding you up by itself.
+
 Read announcements do not disappear, they step aside. The page shows only what
 is unread or still current — otherwise every visit would open with the whole
 family chronicle — and a **"Frühere Mitteilungen"** section at the bottom loads
