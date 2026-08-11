@@ -3,9 +3,10 @@
   "private": true,
   "description": "Test harness for the family hub. The app itself ships no dependencies.",
   "scripts": {
-    "test": "node tools/exif-test.mjs && node tools/e2e-supabase.mjs",
+    "test": "node tools/exif-test.mjs && node supabase/functions/push/webpush.test.js && node tools/e2e-supabase.mjs",
     "serve": "node tools/serve.mjs",
-    "check:api": "node tools/query-check.mjs"
+    "check:api": "node tools/query-check.mjs",
+    "check:push": "node supabase/functions/push/webpush.test.js"
   },
   "devDependencies": {
     "playwright": "^1.56.1"

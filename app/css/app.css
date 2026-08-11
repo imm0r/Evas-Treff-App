@@ -475,6 +475,18 @@ img { display: block; max-width: 100%; }
 .date__fields { display: flex; gap: 8px; }
 .date__fields .field { flex: 1; min-width: 0; }
 
+/* --- Benachrichtigungen --------------------------------------------------- */
+
+.glocke {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 10px 0 2px;
+}
+.glocke:empty { display: none; }
+.glocke__an { font-size: 13px; color: var(--ink-dim); }
+/* Der iPhone-Hinweis ist drei Zeilen Anleitung — der darf nicht in einer
+   Flex-Zeile zusammengequetscht werden. */
+.glocke .hint { flex: 1 1 100%; margin: 0; }
+
 /* --- Neues ---------------------------------------------------------------- */
 
 .neues { max-width: 620px; margin: 0 auto; padding: 0 var(--pad) 12px; }

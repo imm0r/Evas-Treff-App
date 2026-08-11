@@ -764,6 +764,35 @@
     await PS.sb.remove('announcements', 'id=eq.' + id);
   };
 
+  // --- Benachrichtigungen ---------------------------------------------------
+
+  /*
+   * Ein Gerät anmelden.
+   *
+   * Als Upsert auf die Adresse: derselbe Browser meldet sich nach einem
+   * Neustart erneut an, oft mit derselben Adresse. Ohne das sammelten sich
+   * Karteileichen, und jede Mitteilung ginge mehrfach an dasselbe Gerät.
+   */
+  data.savePushSubscription = async function (sub) {
+    await PS.sb.insert('push_subscriptions', {
+      profile_id: PS.sb.user() && PS.sb.user().id,
+      endpoint: sub.endpoint,
+      p256dh: sub.p256dh,
+      auth: sub.auth,
+      device: sub.device || null
+    }, { upsert: true, query: 'on_conflict=endpoint' });
+  };
+
+  data.removePushSubscription = async function (endpoint) {
+    await PS.sb.remove('push_subscriptions', 'endpoint=eq.' + encodeURIComponent(endpoint));
+  };
+
+  /** Die eigenen Geräte — die Sichtbarkeitsregel lässt ohnehin nur die durch. */
+  data.pushDevices = async function () {
+    return PS.sb.select('push_subscriptions',
+      'select=id,endpoint,device,created_at,last_sent_at&order=created_at');
+  };
+
   // --- people ---------------------------------------------------------------
 
   data.people = async function () {

@@ -26,7 +26,7 @@
   var PS = global.PS;
   var el = PS.el;
 
-  var state = { me: null, news: null, people: null, archiv: null };
+  var state = { me: null, news: null, people: null, archiv: null, pushAn: null };
   var nodes = {};
 
   async function boot() {
@@ -66,6 +66,9 @@
     nodes.feed.appendChild(el('div', { class: 'status' }, [el('div', { class: 'spinner' })]));
     try {
       state.news = await PS.data.news();
+      // Ob dieses Gerät schon angemeldet ist, weiß nur der Browser — und die
+      // Antwort entscheidet, welcher Knopf gezeichnet wird.
+      state.pushAn = !!(await PS.push.angemeldet().catch(function () { return null; }));
       if (!state.people) {
         state.people = await PS.people.load();
         if (state.people) PS.people.whenReady(render);
@@ -101,6 +104,8 @@
       ]));
     }
 
+    nodes.feed.appendChild(glocke());
+
     var etwas = false;
     news.announcements.forEach(function (item) {
       etwas = true;
@@ -113,6 +118,71 @@
     if (!etwas) nodes.feed.appendChild(nichts());
 
     nodes.feed.appendChild(archivBereich());
+  }
+
+  // --- Benachrichtigungen -----------------------------------------------------
+
+  /*
+   * Der Schalter für Benachrichtigungen — je Gerät.
+   *
+   * Er steht auf DIESER Seite, weil hier ohnehin steht, was man verpasst hat.
+   * Und er wird erst gezeichnet, wenn feststeht, was dieses Gerät kann: einen
+   * Knopf anzubieten, der dann nichts tut, ist schlimmer als keiner.
+   */
+  function glocke() {
+    var box = el('div', { class: 'glocke' });
+
+    if (PS.push.brauchtStartbildschirm()) {
+      // Kein Fehler, sondern eine Regel von Apple — und sie lässt sich mit
+      // zwei Handgriffen erfüllen, also stehen die hier.
+      box.appendChild(el('p', { class: 'hint', text:
+        '🔔 Benachrichtigungen gehen auf dem iPhone nur, wenn diese Seite auf dem ' +
+        'Startbildschirm liegt: unten auf „Teilen" tippen, dann „Zum Home-Bildschirm". ' +
+        'Danach die App von dort öffnen — hier steht dann ein Schalter.' }));
+      return box;
+    }
+    if (!PS.push.möglich()) {
+      return box;   // stiller Browser, stille Seite
+    }
+
+    if (state.pushAn) {
+      box.appendChild(el('span', { class: 'glocke__an', text: '🔔 Benachrichtigungen sind an' }));
+      box.appendChild(el('button', { class: 'btn btn--ghost btn--small', onclick: aus },
+        ['Auf diesem Gerät ausschalten']));
+      return box;
+    }
+    if (PS.push.erlaubnis() === 'denied') {
+      box.appendChild(el('p', { class: 'hint', text:
+        '🔕 Benachrichtigungen sind für diese Seite abgelehnt. Das lässt sich nur in den ' +
+        'Einstellungen deines Browsers wieder ändern — fragen darf die App nicht nochmal.' }));
+      return box;
+    }
+    box.appendChild(el('button', { class: 'btn btn--small', onclick: an },
+      ['🔔 Benachrichtigungen einschalten']));
+    return box;
+  }
+
+  async function an() {
+    try {
+      await PS.push.einschalten();
+    } catch (error) {
+      PS.toast(PS.escapeError(error), 'error');
+      return;
+    }
+    state.pushAn = true;
+    PS.toast('Benachrichtigungen sind auf diesem Gerät an.');
+    render();
+  }
+
+  async function aus() {
+    try {
+      await PS.push.ausschalten();
+    } catch (error) {
+      PS.toast(PS.escapeError(error), 'error');
+      return;
+    }
+    state.pushAn = false;
+    render();
   }
 
   // --- frühere Mitteilungen ---------------------------------------------------
