@@ -1,0 +1,23 @@
+-- Das eigene Profil ist deins — aber nicht jede Spalte darin.
+--
+-- `edit_own_profile` erlaubte UPDATE auf die eigene Zeile, und Row Level
+-- Security kennt keine Spalten. In dieser Zeile steht `is_admin`. Damit konnte
+-- sich JEDES angemeldete Familienmitglied mit einer einzigen Anfrage selbst
+-- zum Administrator machen:
+--
+--   PATCH /rest/v1/profiles?id=eq.<ich>   {"is_admin": true}
+--
+-- Gegen die echte Datenbank nachgestellt, als Konto ohne Adminrecht: kam
+-- durch, `is_admin` stand danach auf true.
+--
+-- Genau dieselbe Lücke war bei `photos` schon einmal geschlossen worden —
+-- dort steht seit dem Umhängen-Feature ein Spalten-GRANT neben der Regel, mit
+-- der Begründung, dass sonst auch `uploader_id` überschreibbar wäre. Bei
+-- `profiles` ist es nie nachgezogen worden.
+--
+-- Die App schreibt hier genau eine Spalte: `person_id`, wenn sich jemand einem
+-- Gesicht auf dem Gruppenfoto zuordnet. Mehr wird nicht gebraucht, also wird
+-- auch nicht mehr erlaubt. Wer Adminrechte vergibt, tut das über die
+-- Gästeliste — und das darf nur, wer sie schon hat.
+revoke update on public.profiles from anon, authenticated;
+grant update (person_id) on public.profiles to authenticated;
