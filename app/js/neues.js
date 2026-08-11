@@ -26,7 +26,7 @@
   var PS = global.PS;
   var el = PS.el;
 
-  var state = { me: null, news: null, people: null };
+  var state = { me: null, news: null, people: null, archiv: null };
   var nodes = {};
 
   async function boot() {
@@ -111,6 +111,59 @@
       .forEach(function (block) { if (block) { etwas = true; nodes.feed.appendChild(block); } });
 
     if (!etwas) nodes.feed.appendChild(nichts());
+
+    nodes.feed.appendChild(archivBereich());
+  }
+
+  // --- frühere Mitteilungen ---------------------------------------------------
+
+  /*
+   * Nachlesen, was schon gelesen ist.
+   *
+   * Oben steht nur, was ungelesen oder noch aktuell ist — sonst stünde bei
+   * jedem Betreten die ganze Familienchronik da. Ohne diesen Weg wäre „Die Oma
+   * ist wieder zu Hause" nach einem einzigen Blick für immer unsichtbar,
+   * obwohl die Zeile in der Datenbank steht.
+   *
+   * Erst auf Klick, nicht beim Laden: die Seite liegt im Weg zur App, und
+   * niemand soll auf eine Liste warten, die er meistens nicht sehen will.
+   */
+  function archivBereich() {
+    var box = el('section', { class: 'archiv' });
+
+    if (state.archiv) {
+      // Was oben schon steht, kommt nicht nochmal — sonst läse man dieselbe
+      // Mitteilung zweimal untereinander.
+      var obenSchon = {};
+      state.news.announcements.forEach(function (item) { obenSchon[item.id] = true; });
+      var frueher = state.archiv.filter(function (item) { return !obenSchon[item.id]; });
+
+      box.appendChild(el('h2', { class: 'neuigkeit__head' }, [
+        el('span', { class: 'neuigkeit__icon', text: '🗄' }),
+        el('span', { text: 'Frühere Mitteilungen' })
+      ]));
+      if (!frueher.length) {
+        box.appendChild(el('p', { class: 'hint', text: 'Es gibt keine früheren Mitteilungen.' }));
+      } else {
+        frueher.forEach(function (item) { box.appendChild(announcement(item)); });
+      }
+      return box;
+    }
+
+    box.appendChild(el('button', {
+      class: 'btn btn--ghost archiv__open', onclick: openArchiv
+    }, ['🗄 Frühere Mitteilungen ansehen']));
+    return box;
+  }
+
+  async function openArchiv() {
+    try {
+      state.archiv = await PS.data.announcements();
+    } catch (error) {
+      PS.toast(PS.escapeError(error), 'error');
+      return;
+    }
+    render();
   }
 
   function nichts() {
@@ -159,6 +212,9 @@
       PS.toast(PS.escapeError(error), 'error');
       return;
     }
+    // Wenn das Archiv offen ist, bleibt es offen — sonst klappt es einem beim
+    // Aufräumen nach jedem Löschen vor der Nase zu.
+    if (state.archiv) state.archiv = await PS.data.announcements();
     await load();
   }
 

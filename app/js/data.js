@@ -727,6 +727,30 @@
       { news_seen_at: new Date().toISOString() });
   };
 
+  /*
+   * Alle Mitteilungen, die neueste zuerst.
+   *
+   * Getrennt von `news()` und erst auf Klick: die Neues-Seite zeigt nur, was
+   * ungelesen oder noch aktuell ist — sonst stünde bei jedem Betreten die
+   * ganze Familienchronik da. Nachlesen können muss man sie trotzdem, sonst
+   * ist „Die Oma ist wieder zu Hause" nach einem Blick für immer weg.
+   */
+  data.announcements = async function () {
+    var rows = await PS.sb.select('announcements',
+      'select=id,body,until,created_at,profiles(people(name))' +
+      '&order=created_at.desc&limit=100');
+    return rows.map(function (row) {
+      return {
+        id: row.id,
+        body: row.body,
+        until: row.until || null,
+        author: (row.profiles && row.profiles.people && row.profiles.people.name) || null,
+        at: new Date(row.created_at),
+        unread: false
+      };
+    });
+  };
+
   data.addAnnouncement = async function (body, until) {
     var rows = await PS.sb.insert('announcements', {
       body: body,

@@ -162,6 +162,7 @@ function makeBackend() {
     albums: [], photos: [], comments: [], people: [], board: [], invites: [],
     events: [], queries: [], reads: [], patches: [], recipes: [], recipePhotos: [],
     deletes: [],
+    announcements: [],
     // Voreinstellung: gar nichts Neues. Jeder Abschnitt setzt sich hin, was er
     // braucht — so kann kein Test versehentlich von den Daten eines anderen
     // abhängen.
@@ -404,6 +405,9 @@ async function stub(page, back) {
     }
     if (p === '/rest/v1/rpc/news_for_me') {
       return json(200, back.news);
+    }
+    if (p === '/rest/v1/announcements' && request.method() === 'GET') {
+      return json(200, back.announcements);
     }
     if (p === '/rest/v1/announcements' && request.method() === 'POST') {
       const row = JSON.parse(request.postData());
@@ -1675,6 +1679,35 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   const merker = back.patches.filter((i) => i.table === 'profiles');
   check('neues: das Gesehen-Datum wird gesetzt',
     merker.length === 1 && !!merker[0].row.news_seen_at, JSON.stringify(merker));
+
+  /*
+   * Nachlesen können, was schon gelesen ist.
+   *
+   * Oben steht nur Ungelesenes und noch Gültiges — ohne diesen Weg wäre eine
+   * einmal gelesene Mitteilung für immer unsichtbar, obwohl sie in der
+   * Datenbank steht.
+   */
+  back.announcements = [
+    { id: 'an-1', body: 'Die Oma ist wieder zu Hause.', until: null,
+      created_at: '2026-08-10T09:00:00Z', profiles: { people: { name: 'Ben' } } },
+    { id: 'an-2', body: 'Grillfest am Samstag bei uns im Garten.', until: '2026-08-20',
+      created_at: '2026-08-02T09:00:00Z', profiles: { people: { name: 'Ben' } } },
+    { id: 'an-alt', body: 'Der Zaun ist gestrichen.', until: null,
+      created_at: '2026-07-01T09:00:00Z', profiles: { people: { name: 'Ben' } } }
+  ];
+  check('archiv: geschlossen, solange niemand fragt',
+    (await page.locator('.archiv__open').count()) === 1 &&
+    (await page.locator('.archiv .aushang').count()) === 0);
+
+  await page.click('.archiv__open');
+  await page.waitForSelector('.archiv .aushang');
+  const frueher = await page.locator('.archiv .aushang__text').allTextContents();
+  check('archiv: zeigt die alte Mitteilung, die oben nicht mehr steht',
+    frueher.length === 1 && frueher[0].includes('Zaun'), JSON.stringify(frueher));
+  // Was oben schon steht, darf unten nicht nochmal stehen.
+  check('archiv: und wiederholt nicht, was oben schon steht',
+    (await page.locator('.aushang__text').allTextContents())
+      .filter((t) => t.includes('Oma')).length === 1);
 
   await shot(page, '8-neues');
 

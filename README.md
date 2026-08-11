@@ -137,6 +137,14 @@ something. Only *unread* things trigger it. An announcement can carry an
 without ever stopping you again — otherwise the choice would be between the
 barbecue notice ambushing you daily and it vanishing after one glance.
 
+Read announcements do not disappear, they step aside. The page shows only what
+is unread or still current — otherwise every visit would open with the whole
+family chronicle — and a **"Frühere Mitteilungen"** section at the bottom loads
+the rest on demand, skipping whatever is already shown above. Without it "Die
+Oma ist wieder zu Hause" would be invisible forever after one glance, while the
+row sat in the database the whole time. On demand rather than on load, because
+this page sits in everyone's way into the app.
+
 Below the announcements, what happened by itself: new photos, comments,
 recipes, events, all since your last visit and never your own doing. The page
 contains **only** what actually exists — no empty headings, no "0 new photos".
