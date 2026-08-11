@@ -125,6 +125,22 @@
         el('button', { class: 'btn btn--ghost', title: 'Neu laden', onclick: function () { load(false); } }, ['⟳'])
       ])
     ]));
+    /*
+     * Die Vorfrage nach Benachrichtigungen — einmal je Gerät und Person.
+     *
+     * Sie steht hier, weil hier jeder ankommt. Die Neues-Seite sieht nur, wer
+     * gerade etwas verpasst hat; wer nichts verpasst hat, landet direkt in den
+     * Alben und fände den Schalter nie.
+     *
+     * Über den Filtern statt darunter: eine Frage, die man erst nach dem
+     * Scrollen sieht, ist keine gestellte Frage. Sie verschwindet beim ersten
+     * Antippen — egal ob ja oder nein — und kommt nicht wieder.
+     */
+    if (PS.push) {
+      var frage = PS.push.vorfrage(state.me && state.me.id);
+      if (frage) app.appendChild(frage);
+    }
+
     app.appendChild(nodes.filters);
     app.appendChild(nodes.newPill);
     app.appendChild(nodes.feed);

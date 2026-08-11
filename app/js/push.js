@@ -135,5 +135,138 @@
     await sub.unsubscribe();
   };
 
+  /*
+   * DIE VORFRAGE
+   * ============
+   *
+   * Der Schalter auf der Neues-Seite reicht nicht: dorthin kommt man nur,
+   * wenn es gerade etwas Neues gibt. Wer nichts verpasst hat, landet direkt
+   * in den Alben und findet den Schalter nie. Gemeldet als „hier wird es für
+   * die meisten schwer, das zu finden" — zu Recht.
+   *
+   * Also fragt die App von sich aus. Aber NICHT mit dem Browser-Dialog:
+   *
+   *   1. Auf dem iPhone geht das gar nicht. WebKit, wörtlich: „As with other
+   *      privileged features of the web platform, requesting a push
+   *      subscription requires an explicit user gesture." Ein Aufruf beim
+   *      Laden der Seite tut dort schlicht nichts.
+   *   2. Und selbst wo es ginge, wäre es die schlechteste Variante. Ein
+   *      unerwarteter Systemdialog wird reflexhaft weggetippt — und ein Nein
+   *      gilt FÜR IMMER. Danach darf die App nie wieder fragen, das kann nur
+   *      noch der Mensch in den Browsereinstellungen zurückdrehen.
+   *
+   * Deshalb erst eine eigene Karte, die erklärt, worum es geht. Der echte
+   * Dialog kommt nur, wenn jemand darauf „Ja" drückt — dann ist es ein Klick,
+   * die Frage ist erwartet, und ein Nein kostet nichts: es bleibt bei uns.
+   */
+
+  /*
+   * Gemerkt wird JE GERÄT UND JE PERSON, nicht in der Datenbank.
+   *
+   * Je Gerät, weil die Anmeldung selbst je Gerät gilt — wer am Rechner
+   * zugestimmt hat, muss am Handy nochmal gefragt werden, sonst bekommt er
+   * dort nie etwas. Je Person zusätzlich, weil auf dem Familien-Tablet
+   * mehrere Konten benutzt werden und die Frage sonst nur einer von ihnen
+   * gestellt würde.
+   *
+   * Nebeneffekt auf dem iPhone, und er ist erwünscht: die zum Startbildschirm
+   * hinzugefügte App hat einen eigenen Speicher. Wer den Hinweis im
+   * Safari-Tab weggeklickt und die App dann installiert hat, wird dort erneut
+   * gefragt — genau dann, wenn es zum ersten Mal funktionieren kann.
+   */
+  function merker(profileId) {
+    return 'ps-push-gefragt:' + (profileId || 'unbekannt');
+  }
+
+  push.schonGefragt = function (profileId) {
+    try {
+      return global.localStorage.getItem(merker(profileId)) === '1';
+    } catch (error) {
+      // Ein Browser ohne localStorage (privater Modus mancher Geräte) darf
+      // hier nicht abstürzen. Dann eben keine Vorfrage — lieber gar nicht
+      // fragen als bei jedem Laden erneut.
+      return true;
+    }
+  };
+
+  push.merkeGefragt = function (profileId) {
+    try {
+      global.localStorage.setItem(merker(profileId), '1');
+    } catch (error) { /* siehe oben */ }
+  };
+
+  /**
+   * Die Karte — oder `null`, wenn hier nichts zu fragen ist.
+   *
+   * Nichts zu fragen ist bei: einem Browser ohne Benachrichtigungen, einer
+   * bereits getroffenen Entscheidung (ja wie nein) und einem Gerät, das schon
+   * gefragt wurde. In all diesen Fällen kommt `null` zurück und die Seite
+   * sieht aus wie vorher.
+   */
+  push.vorfrage = function (profileId, fertig) {
+    if (push.schonGefragt(profileId)) return null;
+
+    var el = PS.el;
+    var iphone = push.brauchtStartbildschirm();
+    if (!iphone && !push.möglich()) return null;
+    // 'granted' wie 'denied' heißt: die Frage ist längst beantwortet.
+    if (!iphone && push.erlaubnis() !== 'default') return null;
+
+    var karte = el('div', { class: 'vorfrage' });
+
+    function weg() {
+      push.merkeGefragt(profileId);
+      if (karte.parentNode) karte.parentNode.removeChild(karte);
+      if (fertig) fertig();
+    }
+
+    if (iphone) {
+      karte.appendChild(el('p', { class: 'vorfrage__text', text:
+        '🔔 Möchtest du Bescheid bekommen, wenn jemand der Familie etwas ausrichtet? ' +
+        'Auf dem iPhone geht das nur, wenn diese Seite auf dem Startbildschirm liegt: ' +
+        'unten auf „Teilen" tippen, dann „Zum Home-Bildschirm". Danach die App von dort ' +
+        'öffnen — sie fragt dich dann.' }));
+      karte.appendChild(el('div', { class: 'vorfrage__knoepfe' }, [
+        el('button', { class: 'btn btn--small', onclick: weg }, ['Verstanden'])
+      ]));
+      return karte;
+    }
+
+    karte.appendChild(el('p', { class: 'vorfrage__text', text:
+      '🔔 Sollen wir dich benachrichtigen, wenn es etwas Neues gibt? Dann bekommst du ' +
+      'eine Mitteilung aufs Gerät, auch wenn die Seite gar nicht offen ist.' }));
+
+    var ja = el('button', { class: 'btn btn--primary btn--small', onclick: async function () {
+      ja.disabled = true;
+      try {
+        await push.einschalten();
+      } catch (error) {
+        ja.disabled = false;
+        PS.toast(PS.escapeError(error), 'error');
+        /*
+         * Hier NICHT merken.
+         *
+         * Ein Fehler ist keine Entscheidung. Wer auf „Ja" gedrückt hat und
+         * an einem Netzausfall gescheitert ist, will offensichtlich
+         * Benachrichtigungen — dem die Frage für immer wegzunehmen wäre
+         * genau falsch herum.
+         *
+         * Die Ausnahme kostet nichts: hat der Browser die Erlaubnis
+         * verweigert, steht sie danach auf 'denied', und die Karte kommt
+         * beim nächsten Laden von allein nicht mehr.
+         */
+        return;
+      }
+      PS.toast('Benachrichtigungen sind auf diesem Gerät an.');
+      weg();
+    } }, ['Ja, gern']);
+
+    karte.appendChild(el('div', { class: 'vorfrage__knoepfe' }, [
+      ja,
+      el('button', { class: 'btn btn--ghost btn--small', onclick: weg }, ['Nein danke'])
+    ]));
+    return karte;
+  };
+
   PS.push = push;
 })(typeof globalThis !== 'undefined' ? globalThis : this);
