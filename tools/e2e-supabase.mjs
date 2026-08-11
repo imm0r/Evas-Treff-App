@@ -2763,6 +2763,82 @@ print(json.dumps({
   }
 }
 
+// --- 6o. am Telefon verdeckt die Leiste nichts ------------------------------
+{
+  /*
+   * Die Navigationsleiste liegt FEST über dem Inhalt. Am Ende jeder Seite muss
+   * deshalb Platz für sie frei bleiben — sonst liegt dort, wo man aufhört zu
+   * scrollen, das letzte Element unter der Leiste.
+   *
+   * Genau das ist passiert, und es war nicht als Layoutfehler zu erkennen:
+   * gemeldet wurde „das Archiv wird am Handy nicht angezeigt". Der Knopf war
+   * da, vollständig gerendert, klickbar — nur eben unter der Leiste. Auf einem
+   * breiten Fenster passte alles ohne Scrollen auf den Schirm, dort fiel es
+   * nie auf.
+   *
+   * Ursache war die Kurzschreibweise: jede Seite setzt ihren Rand als
+   * `padding: 0 var(--pad)`, und die setzt den unteren Wert immer mit. Bei
+   * gleicher Spezifität gewann die spätere Regel.
+   *
+   * Diese Prüfung nimmt jede Seite mit genug Inhalt zum Scrollen und misst, ob
+   * das letzte Element frei liegt. Eine neue Seite, die den Freiraum wieder
+   * überschreibt, fällt hier durch.
+   */
+  const lang = (n) => Array.from({ length: n }, (_, i) =>
+    'Zeile ' + (i + 1) + ' mit genug Text, damit die Seite auf einem Telefon wirklich scrollt.'
+  ).join('\n');
+
+  for (const seite of ['neues.html', 'dates.html', 'rezepte.html', 'admin.html', 'board.html']) {
+    const context = await browser.newContext({ viewport: { width: 390, height: 844 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    back.announcements = [
+      { id: 'a1', body: lang(12), until: null, created_at: '2026-08-10T10:00:00Z',
+        profiles: { people: { name: 'Maria' } } },
+      { id: 'a2', body: lang(12), until: null, created_at: '2026-08-01T10:00:00Z',
+        profiles: { people: { name: 'Maria' } } }
+    ];
+    back.news = Object.assign({}, back.news, {
+      announcements: { unread: 1, items: [back.announcements[0]] }
+    });
+    back.events = Array.from({ length: 8 }, (_, i) => ({
+      id: 'e' + i, title: 'Termin ' + i, starts_on: '2026-09-0' + (i + 1), ends_on: null,
+      starts_at: null, place: 'Irgendwo', note: lang(3), created_by: 'user-1',
+      profiles: { people: { name: 'Maria' } }, event_replies: []
+    }));
+    back.recipes = Array.from({ length: 10 }, (_, i) => ({
+      id: 'r' + i, slug: 'r' + i, title: 'Rezept ' + i, servings: 4, created_by: 'user-1',
+      created_at: '2026-08-01T10:00:00Z', profiles: { people: { name: 'Maria' } },
+      recipe_photos: []
+    }));
+    back.invites = Array.from({ length: 12 }, (_, i) => ({
+      email: 'p' + i + '@example.de', is_admin: false, invited_at: '2026-08-01T10:00:00Z',
+      used_at: null, person_id: null, people: null
+    }));
+    await stub(page, back);
+    await page.goto(origin + '/' + seite + SESSION);
+    await page.waitForSelector('main.feed');
+    await page.waitForFunction(() => !document.querySelector('main.feed .spinner'));
+
+    const m = await page.evaluate(() => {
+      const feed = document.querySelector('main.feed');
+      const nav = document.querySelector('.nav');
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      const letztes = feed.lastElementChild;
+      const lr = letztes.getBoundingClientRect();
+      return {
+        scrollt: document.documentElement.scrollHeight > window.innerHeight + 2,
+        verdeckt: Math.max(0, Math.round(lr.bottom - nav.getBoundingClientRect().top))
+      };
+    });
+    // Scrollt eine Seite gar nicht, kann nichts unter der Leiste liegen — dann
+    // sagt die Messung nichts, und das soll sie auch zugeben.
+    check('leiste: ' + seite + ' verdeckt nichts' + (m.scrollt ? '' : ' (scrollt nicht)'),
+      m.verdeckt === 0, m.verdeckt + ' px unter der Leiste');
+    await context.close();
+  }
+}
+
 // --- 7. nothing is reachable without a session -----------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });

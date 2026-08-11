@@ -384,8 +384,25 @@ img { display: block; max-width: 100%; }
 .nav__item.is-current { color: var(--accent); }
 .nav__icon { font-size: 19px; line-height: 1; }
 
-/* Room for the bar, plus the notch on phones that have one. */
-.feed { padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
+/*
+ * Platz für die Leiste, plus die Kerbe bei Telefonen, die eine haben.
+ *
+ * `main.feed` statt `.feed`, und das ist der ganze Punkt: die Leiste liegt
+ * FEST über dem Inhalt, also muss am Ende der Seite Platz für sie frei
+ * bleiben. Jede Seite setzt aber ihren eigenen Rand als Kurzschreibweise
+ * (`padding: 0 var(--pad)`), und die setzt den unteren Wert immer mit —
+ * bei gleicher Spezifität gewann die spätere Regel und der Freiraum war weg.
+ *
+ * Aufgefallen ist es am Archiv auf der Neues-Seite: „Frühere Mitteilungen"
+ * steht dort immer ganz unten und lag deshalb komplett unter der Leiste.
+ * Gemessen waren es 40 px auf Neues, 52 auf Termine, 51 auf Rezepte und 52
+ * auf Familie — auf einem iPhone mit Home-Indikator jeweils ~34 px mehr.
+ *
+ * Eine Klasse plus Elementname gewinnt gegen eine Klasse allein. Damit muss
+ * keine Seite mehr daran denken, und die nächste kann es nicht wieder
+ * kaputtmachen.
+ */
+main.feed { padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
 
 /* --- the pinboard --------------------------------------------------------- */
 
@@ -477,7 +494,7 @@ img { display: block; max-width: 100%; }
 
 /* --- Sicherung ------------------------------------------------------------ */
 
-.sicherung { max-width: 620px; margin: 0 auto; padding: 0 var(--pad) 12px; }
+.sicherung { max-width: 620px; margin: 0 auto; padding: 0 var(--pad); }
 .sicherung__head { margin: 0 0 10px; font-family: var(--display); font-size: 17px; }
 .sicherung__liste {
   margin: 12px 0; padding-left: 20px;
@@ -524,7 +541,7 @@ img { display: block; max-width: 100%; }
 
 /* --- Neues ---------------------------------------------------------------- */
 
-.neues { max-width: 620px; margin: 0 auto; padding: 0 var(--pad) 12px; }
+.neues { max-width: 620px; margin: 0 auto; padding: 0 var(--pad); }
 .neues__tools { margin: 12px 0 4px; }
 
 /* Ein Aushang sieht anders aus als eine Rubrik darunter — er ist der Grund,
