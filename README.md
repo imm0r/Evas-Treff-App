@@ -365,6 +365,17 @@ Three checks, all of which measure the code against something other than itself:
   second one can be created, a move sending `album_id` and nothing else, the
   unread mark appearing only on the picture that has one and clearing when the
   thread is opened, and a signed-out page requesting nothing at all.
+- Before any of that, **every page is opened once with a full backend** and must
+  come up clean — no console error *and* no error box. A module calling into
+  another whose file the page forgot to load dies with "Cannot read properties
+  of undefined", and that is exactly how `neues.html` shipped: the only page not
+  loading `album.js`, which `people.js` calls into. Two things made it slip
+  through. The page's own `try/catch` turned the crash into a red box rather
+  than an uncaught error, so a guard listening only to the console waved it
+  past; and `people.js` returns early when no face map is loaded, which no test
+  had bothered to provide, so the call was never reached. The guard now fails on
+  the box too, and it runs early — sitting after the tests that die on the same
+  fault, it could never have been shown to work.
 - `tools/query-check.mjs` (`npm run check:api`) — every query the app makes,
   put to the real Supabase without a session. *Every* one: it walks whatever is
   on `PS.data` rather than a hand-kept list, because the hand-kept list went
