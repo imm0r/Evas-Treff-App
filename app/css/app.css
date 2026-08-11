@@ -1235,3 +1235,65 @@ img { display: block; max-width: 100%; }
 @media (prefers-reduced-motion: reduce) {
   * { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
+
+/* --- Formatierter Text ------------------------------------------------------ */
+
+/*
+ * Absätze und Listen kommen jetzt als echte Elemente, nicht mehr als ein
+ * Textblock mit `white-space: pre-wrap`. Deshalb hier eigene Abstände: die
+ * Standardabstände eines <p> sind für eine Kommentarzeile viel zu groß.
+ */
+.text-absatz { margin: 0 0 0.6em; }
+.text-absatz:last-child { margin-bottom: 0; }
+.text-liste { margin: 0 0 0.6em; padding-left: 1.35em; }
+.text-liste:last-child { margin-bottom: 0; }
+.text-liste li { margin: 0.15em 0; }
+.text-link { color: var(--accent); overflow-wrap: anywhere; }
+
+/*
+ * `pre-wrap` muss weg, wo jetzt echte Absätze stehen.
+ *
+ * Die Umbrüche stecken inzwischen in <br> und <p>; bliebe pre-wrap stehen,
+ * käme zwischen zwei Absätzen zusätzlich die Leerzeile aus dem Quelltext
+ * heraus — also ein doppelter Abstand.
+ */
+.post__text, .comment__text, .aushang__text, .date__note, .rezept__note {
+  white-space: normal;
+}
+
+/* --- Die Schreibhilfe ------------------------------------------------------- */
+
+.schreibfeld { display: block; }
+.schreibhilfe {
+  display: flex; gap: 4px; flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+.schreibhilfe__knopf {
+  min-width: 34px; height: 30px; padding: 0 8px;
+  border: 1px solid var(--line); border-radius: 8px;
+  background: var(--surface-2); color: var(--ink);
+  font-family: var(--ui); font-size: 14px; line-height: 1;
+  cursor: pointer;
+}
+.schreibhilfe__knopf:hover { border-color: var(--accent); }
+.schreibhilfe__knopf.is-fett { font-weight: 700; }
+.schreibhilfe__knopf.is-kursiv { font-style: italic; }
+.schreibhilfe__knopf.is-unter { text-decoration: underline; }
+
+/*
+ * Die Vorschau zeigt sich nur, wenn wirklich etwas ausgezeichnet ist — wer
+ * einfach nur schreibt, soll kein zweites Feld unter dem ersten sehen.
+ */
+.schreibvorschau { display: none; }
+.schreibvorschau.is-da {
+  display: block;
+  margin-top: 8px; padding: 8px 10px;
+  border: 1px dashed var(--line); border-radius: 10px;
+  background: var(--surface);
+}
+.schreibvorschau__marke {
+  display: block; margin-bottom: 4px;
+  font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.schreibvorschau__inhalt { font-size: 14px; line-height: 1.5; word-break: break-word; }

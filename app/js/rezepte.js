@@ -206,7 +206,7 @@
     if (zutaten.length) {
       card.appendChild(el('h2', { class: 'rezept__head', text: 'Zutaten' }));
       var ul = el('ul', { class: 'rezept__zutaten' });
-      zutaten.forEach(function (line) { ul.appendChild(el('li', { text: line })); });
+      zutaten.forEach(function (line) { ul.appendChild(el('li', {}, [PS.text.zeile(line)])); });
       card.appendChild(ul);
     }
 
@@ -214,12 +214,12 @@
     if (schritte.length) {
       card.appendChild(el('h2', { class: 'rezept__head', text: 'Zubereitung' }));
       var ol = el('ol', { class: 'rezept__schritte' });
-      schritte.forEach(function (line) { ol.appendChild(el('li', { text: line })); });
+      schritte.forEach(function (line) { ol.appendChild(el('li', {}, [PS.text.zeile(line)])); });
       card.appendChild(ol);
     }
 
     if (recipe.note) {
-      card.appendChild(el('p', { class: 'rezept__note', text: recipe.note }));
+      card.appendChild(el('div', { class: 'rezept__note' }, [PS.text.block(recipe.note)]));
     }
 
     if (mayEdit()) {
@@ -335,9 +335,9 @@
         el('label', { class: 'label', text: 'Für wie viele Personen? (optional)' }),
         nodes.fServings,
         el('label', { class: 'label', text: 'Zutaten — eine pro Zeile' }),
-        nodes.fIngredients,
+        PS.text.feld(nodes.fIngredients, { listen: false }),
         el('label', { class: 'label', text: 'Zubereitung — ein Schritt pro Zeile' }),
-        nodes.fSteps,
+        PS.text.feld(nodes.fSteps, { listen: false }),
         nodes.fNote,
         el('div', { class: 'confirm__actions' }, [
           el('button', { class: 'btn', onclick: closeForm }, ['Abbrechen']),

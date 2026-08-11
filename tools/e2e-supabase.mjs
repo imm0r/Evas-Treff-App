@@ -2458,6 +2458,311 @@ print(json.dumps({
   }
 }
 
+// --- 6l. Textauszeichnung: der Umwandler ------------------------------------
+{
+  /*
+   * Der Umwandler baut DOM-Knoten und braucht deshalb einen Browser. Er läuft
+   * hier IN der Seite, gegen dieselbe Datei, die auch ausgeliefert wird.
+   *
+   * Geprüft werden drei Dinge, und das dritte ist das wichtigste:
+   *   1. dass die sechs Auszeichnungen das Richtige ergeben,
+   *   2. dass ein normaler Satz unverändert bleibt,
+   *   3. dass sich kein Markup einschleusen lässt.
+   */
+  const context = await browser.newContext({ viewport: { width: 900, height: 900 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  const back = makeBackend();
+  await stub(page, back);
+  await page.goto(origin + '/board.html' + SESSION);
+  await page.waitForSelector('.compose');
+
+  /*
+   * Jede Auswertung mit einer Frist.
+   *
+   * Ohne die hier war ein Fehler im Umwandler nicht als Fehler zu erkennen:
+   * `zeile()` teilte sich ein Regex-Objekt mit seinem eigenen rekursiven
+   * Aufruf, las nach jeder Rückkehr wieder von vorn und baute endlos Knoten.
+   * Der Testlauf „hing" nicht — er wurde einfach nicht fertig, während ein
+   * Chromium-Prozess auf 14 GB wuchs.
+   *
+   * Fünf Sekunden sind für das Umwandeln eines Satzes grotesk viel. Wer sie
+   * überschreitet, hat keine langsame Maschine, sondern eine Schleife.
+   */
+  const mitFrist = (versprechen, was) => Promise.race([
+    versprechen,
+    new Promise((_, weg) => setTimeout(
+      () => weg(new Error('länger als 5 s: ' + was + ' — vermutlich eine Endlosschleife')), 5000))
+  ]);
+
+  /** Den Text durch den Umwandler schicken und das erzeugte HTML zurückgeben. */
+  const html = (quelle) => mitFrist(page.evaluate((q) => {
+    const box = document.createElement('div');
+    box.appendChild(window.PS.text.block(q));
+    return box.innerHTML;
+  }, quelle), JSON.stringify(quelle));
+
+  const faelle = [
+    ['**fett**', '<p class="text-absatz"><strong>fett</strong></p>'],
+    ['*kursiv*', '<p class="text-absatz"><em>kursiv</em></p>'],
+    ['__unter__', '<p class="text-absatz"><u>unter</u></p>'],
+    // Ein gewöhnlicher Satz darf durch die Formatierung NICHT anders werden.
+    ['Hallo ihr Lieben', '<p class="text-absatz">Hallo ihr Lieben</p>'],
+    // Zeilenumbruch innerhalb eines Absatzes bleibt ein Umbruch: bisher wurde
+    // alles mit pre-wrap gezeigt, und wer umbricht, meint das auch so.
+    ['eins\nzwei', '<p class="text-absatz">eins<br>zwei</p>'],
+    // Leerzeile trennt Absätze — und erzeugt keinen leeren dazwischen.
+    ['eins\n\nzwei', '<p class="text-absatz">eins</p><p class="text-absatz">zwei</p>'],
+    ['- Milch\n- Brot',
+      '<ul class="text-liste"><li>Milch</li><li>Brot</li></ul>'],
+    ['1. erst\n2. dann',
+      '<ol class="text-liste"><li>erst</li><li>dann</li></ol>'],
+    // Fett vor kursiv: sonst läse der erste Stern von ** den Rest als kursiv.
+    ['**a** und *b*',
+      '<p class="text-absatz"><strong>a</strong> und <em>b</em></p>'],
+    // Ein einzelnes Sternchen ist ein Sternchen.
+    ['3 * 4 = 12', '<p class="text-absatz">3 * 4 = 12</p>'],
+    // Eine Auszeichnung endet an der Zeile, sie frisst nicht den Rest.
+    ['*offen\nnächste Zeile', '<p class="text-absatz">*offen<br>nächste Zeile</p>']
+  ];
+  for (const [quelle, erwartet] of faelle) {
+    check('text: ' + JSON.stringify(quelle) + ' → ' + erwartet.slice(0, 60),
+      (await html(quelle)) === erwartet, await html(quelle));
+  }
+
+  // Links
+  check('text: [Text](Adresse) wird ein Link',
+    (await html('[hier](https://example.com/x)')) ===
+    '<p class="text-absatz"><a class="text-link" href="https://example.com/x" ' +
+    'target="_blank" rel="noopener noreferrer">hier</a></p>',
+    await html('[hier](https://example.com/x)'));
+  check('text: eine nackte Adresse wird auch verlinkt',
+    (await html('siehe https://example.com')).includes('<a class="text-link" href="https://example.com/"'),
+    await html('siehe https://example.com'));
+
+  /*
+   * DER WICHTIGSTE TEIL.
+   *
+   * Gespeichert wird Text, angezeigt werden gebaute Knoten — eingeschleustes
+   * Markup ist damit strukturell unmöglich, nicht bloß wegmaskiert. Diese
+   * Prüfungen sind der Beweis, dass das auch stimmt.
+   */
+  /*
+   * Gesucht wird ein ÖFFNENDES TAG, nicht das bloße Wort.
+   *
+   * Erster Anlauf verbot schlicht die Zeichenfolge „script". Damit fielen
+   * ausgerechnet die beiden Fälle durch, die richtig funktionierten: aus
+   * `<script>` wird `&lt;script&gt;`, also harmloser Text — in dem das Wort
+   * natürlich weiter vorkommt. Der Test hätte also verlangt, dass der Text
+   * verschwindet, statt dass er ungefährlich ist. Das ist etwas anderes.
+   */
+  const angriffe = [
+    ['<script>alert(1)</script>', '<script'],
+    ['<img src=x onerror=alert(1)>', '<img'],
+    ['[klick](javascript:alert(1))', 'javascript:'],
+    ['[klick](JaVaScRiPt:alert(1))', 'javascript:'],
+    ['[klick](data:text/html,<script>alert(1)</script>)', 'data:'],
+    ['**<b>fett</b>**', '<b>']
+  ];
+  for (const [quelle, verboten] of angriffe) {
+    const raus = await html(quelle);
+    check('text: ' + JSON.stringify(quelle.slice(0, 34)) + ' schleust nichts ein',
+      !raus.toLowerCase().includes(verboten.toLowerCase()), raus);
+  }
+  // Und zwar wirklich: es entsteht kein einziges Element dieser Art.
+  const gefaehrlich = await mitFrist(page.evaluate(() => {
+    const box = document.createElement('div');
+    box.appendChild(window.PS.text.block(
+      '<script>alert(1)</script>\n<img src=x onerror=alert(1)>\n<iframe src=x></iframe>'));
+    return box.querySelectorAll('script, img, iframe, object, embed').length;
+  }), 'Elementprobe');
+  check('text: aus eingeschleustem Markup entsteht kein einziges Element',
+    gefaehrlich === 0, String(gefaehrlich));
+  // Und der Text selbst geht dabei nicht verloren.
+  check('text: eingeschleustes Markup bleibt als Text sichtbar',
+    (await html('<script>alert(1)</script>')).includes('&lt;script&gt;'),
+    await html('<script>alert(1)</script>'));
+  check('text: ein Link mit unerlaubtem Ziel bleibt lesbarer Text',
+    (await html('[klick](javascript:alert(1))')) === '<p class="text-absatz">klick</p>',
+    await html('[klick](javascript:alert(1))'));
+  /*
+   * Klammern in der Adresse.
+   *
+   * Diese Prüfung hat einen echten Mangel gefunden: das erste Adressmuster
+   * hörte bei der ersten Klammer auf. Aus einem Wikipedia-Link wurde ein
+   * abgeschnittener Link und ein übrig gebliebenes „)" daneben — in einem
+   * Rezept keine ausgedachte Lage.
+   */
+  check('text: eine Adresse mit Klammern bleibt vollständig',
+    (await html('[Apfel](https://de.wikipedia.org/wiki/Apfel_(Frucht))')) ===
+    '<p class="text-absatz"><a class="text-link" ' +
+    'href="https://de.wikipedia.org/wiki/Apfel_(Frucht)" target="_blank" ' +
+    'rel="noopener noreferrer">Apfel</a></p>',
+    await html('[Apfel](https://de.wikipedia.org/wiki/Apfel_(Frucht))'));
+
+  // Die Kurzfassung für Sperrbildschirm und Übersicht.
+  const roh = await page.evaluate(() =>
+    window.PS.text.roh('- **Oma** ist *wieder* [zu Hause](https://example.com)'));
+  check('text: roh() lässt nur den Satz übrig',
+    roh === 'Oma ist wieder zu Hause', JSON.stringify(roh));
+
+  check('text: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 6m. Textauszeichnung: die Knopfleiste ----------------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 900, height: 900 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+  await page.goto(origin + '/board.html' + SESSION);
+  await page.waitForSelector('.compose .schreibhilfe');
+
+  const feld = '.compose textarea';
+  const wert = () => page.inputValue(feld);
+
+  // Auswahl umschließen.
+  await page.fill(feld, 'Oma ist da');
+  await page.evaluate((s) => document.querySelector(s).setSelectionRange(0, 3),
+    '.compose textarea');
+  await page.click('.compose .is-fett');
+  check('schreibhilfe: Fett legt sich um die Auswahl', (await wert()) === '**Oma** ist da', await wert());
+
+  // Nochmal derselbe Knopf nimmt sie wieder ab, statt sie zu verdoppeln.
+  await page.click('.compose .is-fett');
+  check('schreibhilfe: nochmal Fett nimmt sie wieder ab', (await wert()) === 'Oma ist da', await wert());
+
+  // Ohne Auswahl: Marken einsetzen und den Zeiger dazwischen stellen.
+  await page.fill(feld, '');
+  await page.click('.compose .is-kursiv');
+  await page.type(feld, 'so');
+  check('schreibhilfe: ohne Auswahl schreibt man zwischen die Marken',
+    (await wert()) === '*so*', await wert());
+
+  // Listen: jede angefasste Zeile bekommt ihr Zeichen.
+  await page.fill(feld, 'Milch\nBrot\nEier');
+  await page.evaluate((s) => document.querySelector(s).setSelectionRange(0, 15),
+    '.compose textarea');
+  await page.click('.compose .is-liste');
+  check('schreibhilfe: Aufzählung kennzeichnet jede Zeile',
+    (await wert()) === '- Milch\n- Brot\n- Eier', JSON.stringify(await wert()));
+
+  await page.evaluate((s) => document.querySelector(s).setSelectionRange(0, 21),
+    '.compose textarea');
+  await page.click('.compose .is-nummern');
+  check('schreibhilfe: Nummerierung zählt hoch und ersetzt die Striche',
+    (await wert()) === '1. Milch\n2. Brot\n3. Eier', JSON.stringify(await wert()));
+
+  // Der Link-Knopf stellt den Zeiger dorthin, wo die Adresse hingehört.
+  await page.fill(feld, '');
+  await page.click('.compose .is-link');
+  await page.type(feld, 'example.com');
+  check('schreibhilfe: der Zeiger landet hinter https://',
+    (await wert()) === '[Text](https://example.com)', await wert());
+
+  /*
+   * Die Vorschau.
+   *
+   * Sie ist der Grund, warum ein Textfeld mit Marken überhaupt zumutbar ist:
+   * niemand muss raten, was `**so**` wird. Aber sie zeigt sich erst, wenn es
+   * etwas zu zeigen gibt — wer einfach nur schreibt, soll kein zweites Feld
+   * unter dem ersten sehen.
+   */
+  await page.fill(feld, 'ganz normaler Satz');
+  check('vorschau: bei gewöhnlichem Text bleibt sie weg',
+    !(await page.locator('.compose .schreibvorschau').first().isVisible()));
+
+  await page.fill(feld, 'jetzt **fett**');
+  await page.waitForSelector('.compose .schreibvorschau.is-da');
+  check('vorschau: sobald etwas ausgezeichnet ist, zeigt sie das Ergebnis',
+    (await page.locator('.compose .schreibvorschau strong').textContent()) === 'fett');
+
+  check('schreibhilfe: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 6n. die Auszeichnung kommt überall an, wo man schreiben kann ------------
+{
+  /*
+   * Eine Leiste, die auf einer Seite fehlt, fällt niemandem auf — außer der
+   * Person, die dort gerade schreiben wollte. Also wird jede Stelle einzeln
+   * nachgesehen, statt sich auf „ist ja dasselbe Modul" zu verlassen.
+   */
+  const stellen = [
+    { seite: 'board.html', oeffnen: null, feld: '.compose', listen: true, was: 'Pinnwand' },
+    { seite: 'neues.html', oeffnen: '.neues__tools .btn', feld: '.confirm__box', listen: true,
+      was: 'Mitteilung' },
+    // Diese beiden Knöpfe tragen keine eigene Klasse, nur ihre Beschriftung.
+    { seite: 'dates.html', oeffnen: 'button:has-text("Neuer Termin")', feld: '.confirm__box',
+      listen: true, was: 'Termin-Notiz' },
+    // Zutaten und Schritte SIND schon Listen — dort wäre ein „- " nur ein
+    // Strich, der vor dem Listenpunkt steht.
+    { seite: 'rezepte.html', oeffnen: 'button:has-text("Neues Rezept")', feld: '.confirm__box',
+      listen: false, was: 'Rezept' }
+  ];
+
+  for (const stelle of stellen) {
+    const context = await browser.newContext({ viewport: { width: 900, height: 900 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    const back = makeBackend();
+    await stub(page, back);
+    await page.goto(origin + '/' + stelle.seite + SESSION);
+    if (stelle.oeffnen) {
+      await page.waitForSelector(stelle.oeffnen);
+      await page.click(stelle.oeffnen);
+    }
+    await page.waitForSelector(stelle.feld + ' .schreibhilfe');
+    check('überall: ' + stelle.was + ' hat eine Schreibhilfe',
+      (await page.locator(stelle.feld + ' .schreibhilfe .is-fett').count()) >= 1);
+    check('überall: ' + stelle.was + ' — Listenknöpfe ' + (stelle.listen ? 'da' : 'weg'),
+      ((await page.locator(stelle.feld + ' .schreibhilfe .is-liste').count()) > 0) === stelle.listen);
+    check('überall: ' + stelle.was + ' ohne Fehler', errors.length === 0, errors.join('\n'));
+    await context.close();
+  }
+
+  /*
+   * Kommentare liegen in der Lightbox und brauchen einen eigenen Weg dorthin.
+   *
+   * Die Fotozeile muss dieselbe Form haben wie die echte Antwort der
+   * Datenbank — mit `media_type`, `uploader_id` und `comments`. Mein erster
+   * Anlauf ließ die weg, es entstand keine einzige Kachel, und der Test lief
+   * in eine Zeitüberschreitung statt in eine Aussage.
+   */
+  {
+    const context = await browser.newContext({ viewport: { width: 900, height: 900 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    back.albums = [
+      { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07',
+        photos: [{ count: 1 }] }
+    ];
+    back.photos = [
+      { id: 'ph-1', album_id: 'alb-1', storage_path: 'evas-treff/foto1.jpg',
+        thumb_path: 'evas-treff/foto1_thumb.jpg', content_hash: 'foto1',
+        media_type: 'image', duration_seconds: null,
+        taken_at: '2026-08-07T20:10:00Z', uploader_id: 'user-1', uploader_name: 'Maria',
+        comments: [] }
+    ];
+    await stub(page, back);
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.tile');
+    await page.click('.tile');
+    await page.waitForSelector('.lightbox:not(.is-hidden)');
+    await page.click('.lightbox__comments-toggle');
+    await page.waitForSelector('.comments__form .schreibhilfe');
+    check('überall: Kommentare haben eine Schreibhilfe',
+      (await page.locator('.comments__form .schreibhilfe .is-fett').count()) === 1);
+    await context.close();
+  }
+}
+
 // --- 7. nothing is reachable without a session -----------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
