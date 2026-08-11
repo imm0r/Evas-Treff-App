@@ -140,6 +140,20 @@
     ].join('-')) + ', ' + time;
   };
 
+  /**
+   * „84,2 MB" statt „88293376".
+   *
+   * Lag früher in imaging.js, weil es dort zuerst gebraucht wurde. Das hat
+   * gereicht, bis die Sicherungsseite eine Größe anzeigen wollte und dafür
+   * die komplette Bilddekodierung hätte laden müssen — ein Zahlenformatierer
+   * gehört zu den allgemeinen Helfern.
+   */
+  PS.formatBytes = function (bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1).replace('.', ',') + ' MB';
+  };
+
   PS.escapeError = function (error) {
     return (error && error.message) ? error.message : String(error);
   };

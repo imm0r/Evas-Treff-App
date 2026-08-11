@@ -71,6 +71,11 @@
     app.appendChild(el('header', { class: 'topbar' }, [
       el('div', { class: 'topbar__brand' }, [el('h1', { class: 'topbar__title', text: 'Familie' })]),
       el('div', { class: 'topbar__actions' }, [
+        // Die Sicherung wohnt hier, weil sie dasselbe Recht braucht wie die
+        // Gästeliste — und weil eine eigene Leiste unten für etwas, das man
+        // einmal im Monat anfasst, den Platz der täglichen Wege wegnähme.
+        el('a', { class: 'btn btn--ghost', href: 'sicherung.html', title: 'Alles herunterladen' },
+          ['🖫 Sicherung']),
         el('button', { class: 'btn btn--ghost', title: 'Neu laden', onclick: load }, ['⟳'])
       ])
     ]));

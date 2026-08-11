@@ -111,13 +111,21 @@ const PS = makeSandbox();
 /*
  * Ein Argument, das gleichzeitig eine ID und ein Objekt ist.
  *
- * Die Datenschicht nimmt an derselben ersten Stelle mal eine ID
- * (`photos(albumId)`) und mal ein ganzes Ding (`removeRecipe(rezept)`). Ein
- * String-Objekt ist beides: es fügt sich als UUID in eine Abfrage ein und hat
- * trotzdem `.id`, `.slug` und `.photos`. Ohne den Kniff müsste hier wieder
- * eine Liste pro Funktion stehen — genau das, was gerade abgeschafft wurde.
+ * Die Datenschicht nimmt an derselben Stelle mal eine ID (`photos(albumId)`),
+ * mal ein ganzes Ding (`removeRecipe(rezept)`) und mal einen Rückruf
+ * (`backupTables(onTable)`). Eine Funktion mit eigenem `toString` ist alles
+ * drei: sie fügt sich als UUID in eine Abfrage ein, hat `.id`, `.slug` und
+ * `.photos`, und man kann sie aufrufen. Ohne den Kniff müsste hier wieder eine
+ * Liste pro Funktion stehen — genau das, was abgeschafft wurde.
  */
-const anything = Object.assign(new String(UUID), { id: UUID, slug: UUID, photos: [] });
+const anything = Object.assign(function () {}, {
+  id: UUID, slug: UUID, photos: [],
+  // Als Funktion getarnt, damit auch Rückrufe durchgehen: `backupTables`
+  // meldet ihren Fortschritt, und ein nicht aufrufbares Argument hat die
+  // Schleife nach der ERSTEN Tabelle abgebrochen — elf Abfragen wären
+  // ungeprüft geblieben, ohne dass hier etwas rot geworden wäre.
+  toString: function () { return UUID; }
+});
 const args = [anything, anything, anything];
 
 for (const name of Object.keys(PS.data).sort()) {
