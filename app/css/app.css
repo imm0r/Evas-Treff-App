@@ -506,6 +506,22 @@ img { display: block; max-width: 100%; }
    Flex-Zeile zusammengequetscht werden. */
 .glocke .hint { flex: 1 1 100%; margin: 0; }
 
+/* Die Vorfrage auf der Alben-Seite. Kein Modal: was den Bildschirm zunagelt,
+   wird weggetippt, bevor es gelesen ist — und dieses Wegtippen wäre dann die
+   Antwort für immer. */
+.vorfrage {
+  max-width: 620px; margin: 10px auto 0;
+  padding: 13px 16px;
+  border: 1px solid var(--line);
+  /* Wie ein Aushang eingefärbt, nur ohne den „ungelesen"-Streifen: es ist eine
+     Frage an dich, keine Nachricht von jemandem. */
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.vorfrage__text { margin: 0 0 10px; font-size: 14px; line-height: 1.45; }
+.vorfrage__knoepfe { display: flex; gap: 8px; flex-wrap: wrap; }
+
 /* --- Neues ---------------------------------------------------------------- */
 
 .neues { max-width: 620px; margin: 0 auto; padding: 0 var(--pad) 12px; }

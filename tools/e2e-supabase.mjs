@@ -417,6 +417,11 @@ async function stub(page, back) {
       return json(200, back.pushSubs);
     }
     if (p === '/rest/v1/push_subscriptions' && request.method() === 'POST') {
+      // Für den Fall „Ja gedrückt, aber das Speichern schlägt fehl". Ohne das
+      // ließe sich nicht prüfen, dass ein Fehler die Frage NICHT verbraucht.
+      if (back.failInsert === 'push_subscriptions') {
+        return json(503, { message: 'kein Netz' });
+      }
       const row = JSON.parse(request.postData());
       back.inserts.push({ table: 'push_subscriptions', row, prefer: request.headers()['prefer'] || '' });
       back.pushSubs.push(row);
@@ -2200,6 +2205,255 @@ print(json.dumps({
       back.deletes.some((d) => d.table === 'push_subscriptions'), JSON.stringify(back.deletes));
 
     check('push: keine Fehler', errors.length === 0, errors.join('\n'));
+    await context.close();
+  }
+}
+
+// --- 6k. die Vorfrage: die Frage findet EINEN, nicht umgekehrt ---------------
+{
+  /*
+   * Der Schalter auf der Neues-Seite reicht nicht — dorthin kommt man nur,
+   * wenn es gerade etwas Neues gibt. Also fragt die Alben-Seite von sich aus,
+   * einmal je Gerät und Person.
+   *
+   * Der Browser-Dialog selbst wird hier NACHGEBAUT (siehe 6j): eine echte
+   * Anmeldung bei Google gibt es im Testlauf nicht. Geprüft wird das, worauf
+   * es ankommt — wann die Karte kommt, wann nicht, und dass ein „Ja" wirklich
+   * anmeldet.
+   */
+
+  /*
+   * Ein Gerät, das Benachrichtigungen kann. `erlaubnis` ist der Startzustand.
+   *
+   * Als ARGUMENT von `addInitScript` übergeben, nicht als Closure eingefangen.
+   * Playwright überträgt nur den Quelltext der Funktion in die Seite; eine
+   * eingefangene Variable ist dort nicht definiert. Genau darüber bin ich hier
+   * gestolpert: die Seite warf „erlaubnis is not defined", der echte
+   * Notification-Zustand blieb stehen, und der Test las 'denied' statt
+   * 'default'. Das sah aus wie ein Fehler im Code und war einer im Test.
+   */
+  const faehig = (erlaubnis) => {
+    Object.defineProperty(navigator, 'userAgent',
+      { get: () => 'Mozilla/5.0 (Linux; Android 14) Chrome/120' });
+    let angemeldet = null;
+    const fakeSub = {
+      endpoint: 'https://fcm.example/vorfrage',
+      toJSON: () => ({ keys: { p256dh: 'PPPP', auth: 'AAAA' } }),
+      unsubscribe: async () => { angemeldet = null; return true; }
+    };
+    const reg = {
+      pushManager: {
+        getSubscription: async () => angemeldet,
+        subscribe: async () => { angemeldet = fakeSub; return fakeSub; }
+      }
+    };
+    Object.defineProperty(navigator, 'serviceWorker', {
+      configurable: true,
+      get: () => ({ register: async () => reg, getRegistration: async () => reg, ready: Promise.resolve(reg) })
+    });
+    window.PushManager = function () {};
+    window.Notification = {
+      permission: erlaubnis,
+      requestPermission: async () => { window.Notification.permission = 'granted'; return 'granted'; }
+    };
+  };
+
+  // Wer noch nie gefragt wurde, wird gefragt — ohne etwas suchen zu müssen.
+  {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+    const back = makeBackend();
+    await stub(page, back);
+    await page.addInitScript(faehig, 'default');
+
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.vorfrage');
+    check('vorfrage: sie erscheint auf der Alben-Seite von allein',
+      (await page.textContent('.vorfrage')).includes('benachrichtigen'),
+      await page.textContent('.vorfrage'));
+
+    /*
+     * Über den Filtern, nicht darunter.
+     *
+     * Eine Frage, die man erst nach dem Scrollen sieht, ist keine gestellte
+     * Frage — und genau das war der Mangel, den die Vorfrage beheben soll.
+     */
+    const oben = await page.evaluate(() => {
+      const f = document.querySelector('.vorfrage');
+      const g = document.querySelector('.filters') || document.querySelector('.feed');
+      return f.compareDocumentPosition(g) & Node.DOCUMENT_POSITION_FOLLOWING ? 1 : 0;
+    });
+    check('vorfrage: sie steht vor dem Inhalt, nicht darunter', oben === 1);
+
+    await page.click('.vorfrage .btn--primary');
+    await page.waitForSelector('.vorfrage', { state: 'detached' });
+    const row = (back.inserts.find((i) => i.table === 'push_subscriptions') || {}).row;
+    check('vorfrage: „Ja" meldet das Gerät wirklich an',
+      !!row && row.endpoint === 'https://fcm.example/vorfrage', JSON.stringify(row));
+
+    // Und die Frage ist damit erledigt — auch nach einem Neuladen.
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.feed');
+    check('vorfrage: nach dem Ja kommt sie nicht wieder',
+      (await page.locator('.vorfrage').count()) === 0);
+    check('vorfrage: keine Fehler', errors.length === 0, errors.join('\n'));
+    await context.close();
+  }
+
+  // „Nein danke" heißt nein — und zwar auch beim nächsten Öffnen.
+  {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    await stub(page, back);
+    await page.addInitScript(faehig, 'default');
+
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.vorfrage');
+    await page.click('.vorfrage .btn--ghost');
+    await page.waitForSelector('.vorfrage', { state: 'detached' });
+    check('vorfrage: „Nein danke" meldet nichts an',
+      !back.inserts.some((i) => i.table === 'push_subscriptions'), JSON.stringify(back.inserts));
+
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.feed');
+    check('vorfrage: und sie fragt danach nicht wieder',
+      (await page.locator('.vorfrage').count()) === 0);
+    await context.close();
+  }
+
+  /*
+   * Ein Fehler ist keine Entscheidung.
+   *
+   * Wer auf „Ja" drückt und an einem Netzausfall scheitert, will offensichtlich
+   * Benachrichtigungen. Ihm die Frage für immer wegzunehmen wäre genau falsch
+   * herum — hier hätte ein `merkeGefragt()` an der falschen Stelle gereicht.
+   */
+  {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    back.failInsert = 'push_subscriptions';
+    await stub(page, back);
+    await page.addInitScript(faehig, 'default');
+
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.vorfrage');
+    await page.click('.vorfrage .btn--primary');
+    await page.waitForSelector('.toast');
+    check('vorfrage: scheitert das Anmelden, bleibt die Frage stehen',
+      (await page.locator('.vorfrage').count()) === 1);
+
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.feed');
+    check('vorfrage: und sie wird beim nächsten Mal wieder gestellt',
+      (await page.locator('.vorfrage').count()) === 1);
+    await context.close();
+  }
+
+  // Je Person: auf dem Familien-Tablet darf die Frage nicht nur einer bekommen.
+  {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    await stub(page, back);
+    await page.addInitScript(faehig, 'default');
+
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.vorfrage');
+    await page.click('.vorfrage .btn--ghost');
+    await page.waitForSelector('.vorfrage', { state: 'detached' });
+
+    // Dasselbe Gerät, anderes Konto.
+    back.profile = Object.assign({}, back.profile, { id: 'user-2', email: 'oma@example.de' });
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.vorfrage');
+    check('vorfrage: die nächste Person am selben Gerät wird trotzdem gefragt',
+      (await page.locator('.vorfrage').count()) === 1);
+    await context.close();
+  }
+
+  // Wo nichts zu fragen ist, wird auch nicht gefragt.
+  const stumm = [
+    {
+      was: 'schon erlaubt', erwartet: 0,
+      skript: faehig, arg: 'granted'
+    },
+    {
+      was: 'schon abgelehnt', erwartet: 0,
+      skript: faehig, arg: 'denied'
+    },
+    {
+      was: 'Browser ohne Benachrichtigungen', erwartet: 0,
+      skript: () => { delete window.PushManager; delete window.Notification; }
+    }
+  ];
+  for (const fall of stumm) {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    await stub(page, back);
+    await page.addInitScript(fall.skript, fall.arg);
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.feed');
+    check('vorfrage: ' + fall.was + ' → keine Karte',
+      (await page.locator('.vorfrage').count()) === fall.erwartet);
+    await context.close();
+  }
+
+  // iPhone im Safari-Tab: die Anleitung statt eines Knopfes, der nichts tut.
+  {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    await stub(page, back);
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'userAgent',
+        { get: () => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)' });
+      delete window.PushManager;
+    });
+    await page.goto(origin + '/index.html' + SESSION);
+    await page.waitForSelector('.vorfrage');
+    const text = await page.textContent('.vorfrage');
+    check('vorfrage: iPhone im Tab bekommt die Anleitung zum Startbildschirm',
+      text.includes('Home-Bildschirm') && !text.includes('Ja, gern'), text.slice(0, 160));
+    await context.close();
+  }
+
+  /*
+   * Der Service Worker muss sich auf JEDER Seite anmelden dürfen, die fragt.
+   *
+   * Alle Prüfungen oben bauen `navigator.serviceWorker` nach — nötig, weil es
+   * keinen echten Push-Dienst gibt, aber damit prüfen sie die
+   * Sicherheitsrichtlinie der Seite gerade NICHT.
+   *
+   * Und die ist hier nicht offensichtlich: `worker-src` fällt zurück auf
+   * `child-src`, dann auf `script-src`, erst dann auf `default-src` (CSP
+   * Level 3). Weil `script-src 'self'` dasteht, ist der Worker also auch ohne
+   * eigenes `worker-src` erlaubt — ich hatte das Gegenteil vermutet und lag
+   * falsch. Eine vierstufige Rückfallkette ist nichts, was man beim Lesen
+   * einer Richtlinie im Kopf haben sollte, also steht `worker-src 'self'`
+   * trotzdem ausdrücklich da, und diese Prüfung sagt, was tatsächlich gilt.
+   *
+   * Dafür wird der ECHTE Worker angemeldet, ohne Attrappe.
+   */
+  for (const seite of ['index.html', 'neues.html']) {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    await stub(page, back);
+    await page.goto(origin + '/' + seite + SESSION);
+    await page.waitForSelector('.feed, .neues');
+    const ergebnis = await page.evaluate(async () => {
+      try {
+        const reg = await navigator.serviceWorker.register('sw.js');
+        return reg && reg.scope ? 'ok' : 'keine Registrierung';
+      } catch (error) { return String(error); }
+    });
+    check('csp: ' + seite + ' darf den Service Worker anmelden', ergebnis === 'ok', ergebnis);
     await context.close();
   }
 }
