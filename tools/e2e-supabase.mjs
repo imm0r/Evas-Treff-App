@@ -9,7 +9,9 @@
  * Usage: node tools/e2e-supabase.mjs
  */
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdtemp } from 'node:fs/promises';
+import { execFileSync } from 'node:child_process';
+import os from 'node:os';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -264,6 +266,10 @@ async function stub(page, back) {
       if (url.searchParams.get('select') === 'album_id,thumb_path,taken_at') {
         return json(200, back.photos.map((x) => ({ album_id: x.album_id, thumb_path: x.thumb_path, taken_at: x.taken_at })));
       }
+      // Ohne Album-Filter ist ALLES gemeint — so fragt die Sicherung.
+      // Vorher lief das in einen Vergleich gegen den leeren String und gab
+      // eine leere Liste zurück, also eine Sicherung ohne Fotos.
+      if (!url.searchParams.has('album_id')) return json(200, back.photos);
       const album = (url.searchParams.get('album_id') || '').replace('eq.', '');
       return json(200, back.photos.filter((x) => x.album_id === album).map((x) =>
         Object.assign({}, x, {
@@ -453,6 +459,25 @@ async function stub(page, back) {
       return json(201, [saved]);
     }
     if (request.method() === 'DELETE') { back.deletes.push(p + '?' + url.search); return json(204, {}); }
+
+    /*
+     * Die Sicherung liest JEDE Tabelle einmal komplett — auch die, für die
+     * dieser Stub sonst keinen Anlass hatte. Eine Tabelle, von der er nichts
+     * weiß, ist leer, nicht nicht vorhanden: mit 404 bräche die Sicherung ab,
+     * obwohl in Wirklichkeit nur nichts drinsteht.
+     */
+    const SICHERUNG = {
+      albums: 'albums', photos: 'photos', board_posts: 'posts', events: 'events',
+      recipes: 'recipes', recipe_photos: 'recipePhotos', announcements: 'announcements',
+      people: 'people', comments: null, event_replies: null
+    };
+    if (request.method() === 'GET' && p.startsWith('/rest/v1/')) {
+      const tabelle = p.slice('/rest/v1/'.length);
+      if (Object.prototype.hasOwnProperty.call(SICHERUNG, tabelle)) {
+        const feld = SICHERUNG[tabelle];
+        return json(200, (feld && back[feld]) || []);
+      }
+    }
 
     return json(404, { message: 'unhandled ' + p });
   });
@@ -751,7 +776,7 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
    * fehlt.
    */
   const seiten = ['/index.html', '/upload.html', '/board.html', '/dates.html',
-    '/rezepte.html', '/neues.html', '/admin.html'];
+    '/rezepte.html', '/neues.html', '/admin.html', '/sicherung.html'];
 
   for (const seite of seiten) {
     const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
@@ -1876,6 +1901,141 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await context.close();
 }
 
+// --- 6h. die Sicherung ------------------------------------------------------
+{
+  const context = await browser.newContext({
+    viewport: { width: 900, height: 900 }, acceptDownloads: true
+  });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  /*
+   * Den „Speichern unter"-Dialog wegnehmen.
+   *
+   * Chromium kann direkt auf die Platte schreiben, aber diesen Dialog kann
+   * kein Test bedienen. Also wird hier der andere Weg geprüft — derselbe, den
+   * Firefox und Safari ohnehin gehen: alles im Arbeitsspeicher sammeln und als
+   * Download anbieten. Das ZIP entsteht in beiden Fällen aus demselben Code,
+   * verschieden ist nur, wohin die fertigen Stücke fließen.
+   */
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'showSaveFilePicker', { value: undefined, configurable: true });
+  });
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  const bild = await makeJpeg(scratch, 400, 300, 30, 'Kuchen');
+  const clip = await makeWebm(scratch, 240, 180, 200, 700);
+  await scratch.close();
+  images.set('evas-treff/aaaa1111.jpg', bild);
+  images.set('evas-treff/aaaa1111_thumb.jpg', bild);
+  images.set('evas-treff/bbbb2222.webm', clip);
+  images.set('evas-treff/bbbb2222_thumb.jpg', bild);
+  images.set('photo.jpg', bild);
+
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07' }
+  ];
+  back.photos = [
+    { id: 'ph-1', album_id: 'alb-1', storage_path: 'evas-treff/aaaa1111.jpg',
+      thumb_path: 'evas-treff/aaaa1111_thumb.jpg', content_hash: 'aaaa1111',
+      media_type: 'image', duration_seconds: null, bytes: bild.length,
+      taken_at: '2026-08-07T21:33:00Z', uploader_id: 'user-1', uploader_name: 'Maria', comments: [] },
+    { id: 'ph-2', album_id: 'alb-1', storage_path: 'evas-treff/bbbb2222.webm',
+      thumb_path: 'evas-treff/bbbb2222_thumb.jpg', content_hash: 'bbbb2222',
+      media_type: 'video', duration_seconds: 0.7, bytes: clip.length,
+      taken_at: '2026-08-07T20:10:00Z', uploader_id: 'user-1', uploader_name: 'Ines', comments: [] }
+  ];
+  back.people = [{ name: 'Maria', face_x: 0.7, face_y: 0.4, aliases: [] }];
+
+  await page.goto(origin + '/sicherung.html' + SESSION);
+  await page.waitForSelector('.sicherung .btn--big');
+  check('sicherung: sagt vorher, was hineinkommt',
+    (await page.textContent('.sicherung .panel')).includes('5 Dateien'),
+    (await page.textContent('.sicherung .panel')).slice(0, 160));
+  // Und sagt ehrlich, welchen Weg dieser Browser nimmt.
+  check('sicherung: warnt, wenn der Browser nicht direkt auf die Platte schreiben kann',
+    (await page.textContent('.sicherung .panel')).includes('Arbeitsspeicher'));
+
+  await shot(page, '9-sicherung');
+  const download = page.waitForEvent('download', { timeout: 60000 });
+  await page.click('.sicherung .btn--big');
+  const datei = await download;
+  await page.waitForSelector('.sicherung__fertig', { timeout: 60000 });
+
+  const ordner = await mkdtemp(path.join(os.tmpdir(), 'sicherung-'));
+  const ziel = path.join(ordner, 'sicherung.zip');
+  await datei.saveAs(ziel);
+
+  /*
+   * Von einem ECHTEN Entpacker prüfen lassen.
+   *
+   * Der ZIP-Schreiber ist selbst geschrieben. Ihn mit dem eigenen Leser zu
+   * prüfen hieße, sich seine eigenen Fehler bestätigen zu lassen — eine
+   * Sicherung, die nur diese App öffnen kann, ist keine Sicherung. Also
+   * entscheidet Pythons `zipfile`, inklusive aller CRC-Prüfsummen.
+   */
+  const bericht = JSON.parse(execFileSync('python3', ['-c', `
+import zipfile, json, sys
+z = zipfile.ZipFile(sys.argv[1])
+kaputt = z.testzip()
+namen = z.namelist()
+print(json.dumps({
+  'kaputt': kaputt,
+  'namen': namen,
+  'daten': json.loads(z.read('daten.json').decode()) and True,
+  'alben': sorted(n for n in namen if n.startswith('Alben/')),
+  'jpeg': z.read([n for n in namen if n.startswith('Alben/') and n.endswith('.jpg')][0])[:2].hex(),
+  'webm': z.read([n for n in namen if n.endswith('.webm')][0])[:2].hex(),
+  'liesmich': z.read('LIESMICH.txt').decode()[:40]
+}))
+`, ziel], { encoding: 'utf8' }));
+
+  check('sicherung: ein echtes Entpackprogramm öffnet die Datei',
+    bericht.kaputt === null, 'kaputter Eintrag: ' + bericht.kaputt);
+  check('sicherung: die Bilder liegen unter lesbaren Namen statt unter Hashes',
+    bericht.alben.length === 2 &&
+    bericht.alben.every((n) => n.startsWith("Alben/Eva's Treff/2026-08-07_")) &&
+    bericht.alben.some((n) => n.includes('Maria')) &&
+    bericht.alben.some((n) => n.includes('Ines')),
+    JSON.stringify(bericht.alben));
+  check('sicherung: das Video ist als Video drin, das Foto als JPEG',
+    bericht.jpeg === 'ffd8' && bericht.webm === '1a45',
+    bericht.jpeg + ' / ' + bericht.webm);
+  check('sicherung: die Tabellen liegen als daten.json bei', bericht.daten === true);
+  check('sicherung: mit einer LIESMICH, die erklärt was das ist',
+    bericht.liesmich.includes('Sicherung von Evas Treff'), bericht.liesmich);
+  check('sicherung: die Vorschaubilder behalten ihren Original-Pfad',
+    bericht.namen.some((n) => n === 'Vorschaubilder/evas-treff/aaaa1111_thumb.jpg'),
+    JSON.stringify(bericht.namen));
+  check('sicherung: und das Gruppenfoto ist dabei',
+    bericht.namen.includes('Familie/Gruppenfoto.jpg'), JSON.stringify(bericht.namen));
+
+  check('sicherung: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 6i. ohne Adminrecht gibt es keine Sicherung ----------------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const back = makeBackend();
+  back.profile = Object.assign({}, back.profile, { is_admin: false });
+  await stub(page, back);
+
+  await page.goto(origin + '/sicherung.html' + SESSION);
+  await page.waitForSelector('.status');
+  check('sicherung: ohne Adminrecht kein Knopf',
+    (await page.locator('.btn--big').count()) === 0 &&
+    (await page.textContent('.status')).includes('Administratoren'),
+    await page.textContent('.status'));
+  await context.close();
+}
+
 // --- 7. nothing is reachable without a session -----------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
@@ -1888,7 +2048,7 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     return route.fulfill({ status: 401, headers: { 'Content-Type': 'application/json' }, body: '{}' });
   });
   for (const where of ['/index.html', '/upload.html', '/board.html', '/admin.html',
-    '/dates.html', '/rezepte.html', '/neues.html']) {
+    '/dates.html', '/rezepte.html', '/neues.html', '/sicherung.html']) {
     await page.goto(origin + where);
     await page.waitForSelector('.gate');
     await page.waitForTimeout(300);

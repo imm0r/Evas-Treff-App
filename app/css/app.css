@@ -475,6 +475,26 @@ img { display: block; max-width: 100%; }
 .date__fields { display: flex; gap: 8px; }
 .date__fields .field { flex: 1; min-width: 0; }
 
+/* --- Sicherung ------------------------------------------------------------ */
+
+.sicherung { max-width: 620px; margin: 0 auto; padding: 0 var(--pad) 12px; }
+.sicherung__head { margin: 0 0 10px; font-family: var(--display); font-size: 17px; }
+.sicherung__liste {
+  margin: 12px 0; padding-left: 20px;
+  columns: 2; column-gap: 20px;
+  font-size: 13px; color: var(--ink-dim);
+}
+.sicherung__stand {
+  margin: 0 0 8px;
+  font-size: 13px;
+  /* Der Dateiname wechselt bei jeder Datei; ohne feste Höhe hüpft der Balken
+     darunter, sobald ein Name umbricht. */
+  min-height: 2.6em;
+  overflow-wrap: anywhere;
+}
+.sicherung__fertig { margin-top: 12px; }
+.sicherung__warnung { margin-top: 14px; }
+
 /* --- Neues ---------------------------------------------------------------- */
 
 .neues { max-width: 620px; margin: 0 auto; padding: 0 var(--pad) 12px; }

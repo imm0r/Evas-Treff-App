@@ -764,6 +764,70 @@
     await PS.sb.remove('announcements', 'id=eq.' + id);
   };
 
+  // --- Sicherung ----------------------------------------------------------------
+
+  /*
+   * Alles, was in eine Sicherung gehört.
+   *
+   * Die Tabellen einzeln und vollständig, nicht in der Form, die eine Seite
+   * gerade braucht: eine Sicherung soll den Stand wiederherstellen können,
+   * nicht eine Ansicht.
+   *
+   * `comment_reads` fehlt mit Absicht — wer welches Foto gelesen hat, ist
+   * niemandes Erinnerung und beim Wiederherstellen wertlos.
+   *
+   * Enthalten sind auch `profiles` und `invites`, also E-Mail-Adressen. Ohne
+   * sie ließe sich die Gästeliste nicht wiederherstellen, und dann wäre die
+   * Sicherung eine Sammlung von Bildern ohne die Familie dazu. Die LIESMICH im
+   * Archiv sagt das ausdrücklich, damit niemand die Datei versehentlich
+   * herumreicht.
+   */
+  var BACKUP_TABLES = [
+    ['albums',        'select=*&order=event_date'],
+    ['photos',        'select=*&order=taken_at'],
+    ['comments',      'select=*&order=created_at'],
+    ['board_posts',   'select=*&order=created_at'],
+    ['events',        'select=*&order=starts_on'],
+    ['event_replies', 'select=*'],
+    ['recipes',       'select=*&order=title'],
+    ['recipe_photos', 'select=*&order=sort_order'],
+    ['announcements', 'select=*&order=created_at'],
+    ['people',        'select=*&order=sort_order'],
+    ['profiles',      'select=*'],
+    ['invites',       'select=*&order=invited_at']
+  ];
+
+  data.backupTables = async function (onTable) {
+    var alles = {};
+    for (var i = 0; i < BACKUP_TABLES.length; i++) {
+      var name = BACKUP_TABLES[i][0];
+      // Reihum statt alle auf einmal: bei einem Fehler weiß man, WELCHE
+      // Tabelle nicht mitgekommen ist, und der Fortschritt bleibt ehrlich.
+      alles[name] = await PS.sb.select(name, BACKUP_TABLES[i][1]);
+      if (onTable) onTable(name, alles[name].length, i + 1, BACKUP_TABLES.length);
+    }
+    return alles;
+  };
+
+  /**
+   * Unterschriebene Adressen für viele Dateien, in Häppchen.
+   *
+   * Alle zweihundert Pfade in einer Anfrage wäre eine sehr lange Zeile und ein
+   * einziger Fehlschlag für alles. In Häppchen bleibt jede Anfrage klein, und
+   * die Sicherung kommt auch dann voran, wenn eine Datei fehlt.
+   */
+  data.signMany = async function (bucket, paths, onProgress) {
+    var signed = {};
+    var STUECK = 60;
+    for (var i = 0; i < paths.length; i += STUECK) {
+      var teil = paths.slice(i, i + STUECK);
+      var antwort = await PS.sb.signPaths(bucket, teil, 3600);
+      Object.keys(antwort).forEach(function (key) { signed[key] = antwort[key]; });
+      if (onProgress) onProgress(Math.min(i + STUECK, paths.length), paths.length);
+    }
+    return signed;
+  };
+
   // --- people ---------------------------------------------------------------
 
   data.people = async function () {

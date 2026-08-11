@@ -133,9 +133,7 @@
     return hash.toString(16).padStart(8, '0');
   };
 
-  PS.formatBytes = function (bytes) {
-    if (bytes < 1024) return bytes + ' B';
-    if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + ' KB';
-    return (bytes / 1024 / 1024).toFixed(1).replace('.', ',') + ' MB';
-  };
+  // `PS.formatBytes` stand bis vor Kurzem hier. Es ist ein Zahlenformatierer
+  // und hat mit Bilddekodierung nichts zu tun — es wohnt jetzt in core.js,
+  // damit eine Seite dafür nicht die ganze Bildmaschinerie laden muss.
 })(typeof globalThis !== 'undefined' ? globalThis : this);
