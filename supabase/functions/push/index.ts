@@ -20,7 +20,7 @@ const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
 const SERVICE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const VAPID_PUBLIC = Deno.env.get('VAPID_PUBLIC_KEY')!;
 const VAPID_PRIVATE = Deno.env.get('VAPID_PRIVATE_KEY')!;
-const HOOK_SECRET = Deno.env.get('PUSH_HOOK_SECRET')!;
+const HOOK_SECRET = Deno.env.get('PUSH_HOOK_SECRET');
 // Wen der Push-Dienst anschreibt, wenn etwas dauerhaft schiefgeht.
 const SUBJECT = Deno.env.get('VAPID_SUBJECT') || 'mailto:gdthsupp0rt@gmail.com';
 
@@ -43,6 +43,19 @@ function kurz(text: string, max: number) {
 }
 
 Deno.serve(async (req) => {
+  /*
+   * Zwei verschiedene Gründe für dieselbe Abfuhr — und der Unterschied kostet
+   * sonst eine Stunde.
+   *
+   * Ist das Geheimnis gar nicht hinterlegt, lehnt die Funktion JEDEN Aufruf ab,
+   * auch den richtigen. Von außen sieht das aus wie ein falscher Wert, ist aber
+   * eine leere Einstellung. Der Text sagt deshalb, welcher der beiden Fälle
+   * vorliegt. Verraten wird damit nichts: dass etwas eingerichtet ist, hilft
+   * niemandem beim Raten, WAS.
+   */
+  if (!HOOK_SECRET) {
+    return new Response('PUSH_HOOK_SECRET ist nicht gesetzt', { status: 401 });
+  }
   if (req.headers.get('x-push-secret') !== HOOK_SECRET) {
     return new Response('nein', { status: 401 });
   }
