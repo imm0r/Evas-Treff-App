@@ -1298,19 +1298,29 @@ main.feed { padding-bottom: calc(74px + env(safe-area-inset-bottom)); }
 .schreibhilfe__knopf.is-unter { text-decoration: underline; }
 
 /*
- * Die Vorschau zeigt sich nur, wenn wirklich etwas ausgezeichnet ist — wer
- * einfach nur schreibt, soll kein zweites Feld unter dem ersten sehen.
+ * Der Schreibbereich muss aussehen wie ein Eingabefeld, sonst sieht man ihm
+ * nicht an, dass man hineinschreiben kann. Die Werte sind bewusst dieselben
+ * wie bei `.field`.
  */
-.schreibvorschau { display: none; }
-.schreibvorschau.is-da {
-  display: block;
-  margin-top: 8px; padding: 8px 10px;
-  border: 1px dashed var(--line); border-radius: 10px;
-  background: var(--surface);
+.schreibbereich {
+  min-height: 76px;
+  padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: var(--surface-2); color: var(--ink);
+  font-family: var(--ui); font-size: 15px; line-height: 1.5;
+  overflow-wrap: anywhere;
 }
-.schreibvorschau__marke {
-  display: block; margin-bottom: 4px;
-  font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase;
+.schreibbereich:focus { outline: none; border-color: var(--accent); }
+/*
+ * Ein Schreibbereich hat kein `placeholder` — der Hinweis muss also selbst
+ * gezeichnet werden. `:empty` greift nur, solange wirklich nichts drinsteht.
+ */
+.schreibbereich:empty::before {
+  content: attr(data-platzhalter);
   color: var(--ink-dim);
+  pointer-events: none;
 }
-.schreibvorschau__inhalt { font-size: 14px; line-height: 1.5; word-break: break-word; }
+.schreibbereich .text-absatz { margin: 0 0 0.5em; }
+.schreibbereich .text-absatz:last-child { margin-bottom: 0; }
+.schreibbereich ul, .schreibbereich ol { margin: 0.3em 0; padding-left: 1.35em; }
+.schreibbereich a { color: var(--accent); }
