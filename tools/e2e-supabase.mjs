@@ -165,6 +165,7 @@ function makeBackend() {
     events: [], queries: [], reads: [], patches: [], recipes: [], recipePhotos: [],
     deletes: [],
     announcements: [],
+    pushSubs: [],
     // Voreinstellung: gar nichts Neues. Jeder Abschnitt setzt sich hin, was er
     // braucht — so kann kein Test versehentlich von den Daten eines anderen
     // abhängen.
@@ -411,6 +412,20 @@ async function stub(page, back) {
     }
     if (p === '/rest/v1/rpc/news_for_me') {
       return json(200, back.news);
+    }
+    if (p === '/rest/v1/push_subscriptions' && request.method() === 'GET') {
+      return json(200, back.pushSubs);
+    }
+    if (p === '/rest/v1/push_subscriptions' && request.method() === 'POST') {
+      const row = JSON.parse(request.postData());
+      back.inserts.push({ table: 'push_subscriptions', row, prefer: request.headers()['prefer'] || '' });
+      back.pushSubs.push(row);
+      return json(201, [row]);
+    }
+    if (p === '/rest/v1/push_subscriptions' && request.method() === 'DELETE') {
+      back.deletes.push({ table: 'push_subscriptions', query: url.search });
+      back.pushSubs = [];
+      return json(204, {});
     }
     if (p === '/rest/v1/announcements' && request.method() === 'GET') {
       return json(200, back.announcements);
@@ -2061,6 +2076,132 @@ print(json.dumps({
     (await page.textContent('.status')).includes('Administratoren'),
     await page.textContent('.status'));
   await context.close();
+}
+
+// --- 6j. Benachrichtigungen: der Schalter je Gerät --------------------------
+{
+  /*
+   * Die Browser-Schnittstellen werden hier NACHGEBAUT.
+   *
+   * Eine echte Anmeldung bei Google oder Apple lässt sich aus einem Testlauf
+   * nicht herstellen — `pushManager.subscribe` bräuchte einen echten
+   * Push-Dienst. Was sich prüfen lässt und worauf es ankommt: dass die
+   * Oberfläche für jeden Zustand das Richtige zeigt, und dass die Anmeldung
+   * mit den richtigen Werten in der Datenbank landet.
+   *
+   * Die Verschlüsselung selbst hängt nicht an diesem Test: die rechnet das
+   * Beispiel aus RFC 8291 nach (`npm run check:push`).
+   */
+  const faelle = [
+    {
+      was: 'iPhone im Safari-Tab', erwartet: 'Startbildschirm',
+      skript: () => {
+        Object.defineProperty(navigator, 'userAgent',
+          { get: () => 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)' });
+        delete window.PushManager;
+      }
+    },
+    {
+      was: 'Browser ohne Benachrichtigungen', erwartet: null,
+      skript: () => { delete window.PushManager; delete window.Notification; }
+    }
+  ];
+
+  for (const fall of faelle) {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const back = makeBackend();
+    await stub(page, back);
+    await page.addInitScript(fall.skript);
+    await page.goto(origin + '/neues.html' + SESSION);
+    /*
+     * Auf den Archiv-Bereich warten — der steht IMMER am Ende von `render()`.
+     *
+     * Zwei Anläufe waren falsch. Erst auf die Glocke: die ist bei einem
+     * Browser ohne Push ein leeres <div>, und leere Glocken blendet das CSS
+     * aus — der Testlauf wartete auf etwas, das nie sichtbar wird. Dann auf
+     * „kein Ladekreisel mehr": das trifft auch VOR seinem Erscheinen zu, also
+     * las der Test die noch leere Seite.
+     *
+     * Was gebraucht wird, ist ein Zeichen dafür, dass gezeichnet WURDE.
+     */
+    await page.waitForSelector('.neues .archiv');
+    const text = await page.textContent('.neues');
+    check('push: ' + fall.was + ' → ' + (fall.erwartet || 'gar kein Schalter'),
+      fall.erwartet ? text.includes(fall.erwartet)
+        : (!text.includes('Benachrichtigungen einschalten') && !text.includes('Startbildschirm')),
+      'gezeigt wurde: ' + JSON.stringify(text.slice(0, 200)));
+    await context.close();
+  }
+
+  // Ein Gerät, das es kann: einschalten muss die Anmeldung wirklich speichern.
+  {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    const back = makeBackend();
+    await stub(page, back);
+
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'userAgent',
+        { get: () => 'Mozilla/5.0 (Linux; Android 14) Chrome/120' });
+      let angemeldet = null;
+      const fakeSub = {
+        endpoint: 'https://fcm.example/abc123',
+        toJSON: () => ({ keys: { p256dh: 'PPPP', auth: 'AAAA' } }),
+        unsubscribe: async () => { angemeldet = null; return true; }
+      };
+      const reg = {
+        pushManager: {
+          getSubscription: async () => angemeldet,
+          subscribe: async (opts) => {
+            window.__key = new Uint8Array(opts.applicationServerKey).length;
+            angemeldet = fakeSub;
+            return fakeSub;
+          }
+        }
+      };
+      Object.defineProperty(navigator, 'serviceWorker', {
+        configurable: true,
+        get: () => ({ register: async () => reg, getRegistration: async () => reg, ready: Promise.resolve(reg) })
+      });
+      window.PushManager = function () {};
+      window.Notification = { permission: 'default', requestPermission: async () => {
+        window.Notification.permission = 'granted'; return 'granted';
+      } };
+    });
+
+    await page.goto(origin + '/neues.html' + SESSION);
+    await page.waitForSelector('.glocke .btn');
+    check('push: ein fähiges Gerät bekommt den Einschalter',
+      (await page.textContent('.glocke')).includes('einschalten'));
+
+    await page.click('.glocke .btn');
+    await page.waitForSelector('.glocke__an');
+    const row = back.inserts.find((i) => i.table === 'push_subscriptions').row;
+    check('push: die Anmeldung landet mit Adresse und beiden Schlüsseln in der Datenbank',
+      row.endpoint === 'https://fcm.example/abc123' && row.p256dh === 'PPPP' &&
+      row.auth === 'AAAA' && row.profile_id === 'user-1', JSON.stringify(row));
+    check('push: als Upsert auf die Adresse, damit dasselbe Gerät nicht doppelt zählt',
+      /on_conflict=endpoint/.test(JSON.stringify(back.queries)) ||
+      /merge-duplicates/.test(back.inserts[back.inserts.length - 1].prefer || ''),
+      JSON.stringify(back.inserts[back.inserts.length - 1].prefer));
+    // Der Schlüssel muss der unkomprimierte P-256-Punkt sein: 65 Byte.
+    check('push: der Anmeldung wird der öffentliche VAPID-Schlüssel mitgegeben (65 Byte)',
+      (await page.evaluate(() => window.__key)) === 65,
+      String(await page.evaluate(() => window.__key)));
+    check('push: das Gerät wird benannt, damit man es wiedererkennt',
+      row.device === 'Android-Handy', row.device);
+
+    await page.click('.glocke .btn--ghost');
+    await page.waitForSelector('.glocke .btn:not(.btn--ghost)');
+    check('push: ausschalten meldet das Gerät auch in der Datenbank ab',
+      back.deletes.some((d) => d.table === 'push_subscriptions'), JSON.stringify(back.deletes));
+
+    check('push: keine Fehler', errors.length === 0, errors.join('\n'));
+    await context.close();
+  }
 }
 
 // --- 7. nothing is reachable without a session -----------------------------

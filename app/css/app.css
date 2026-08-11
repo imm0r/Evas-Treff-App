@@ -494,6 +494,17 @@ img { display: block; max-width: 100%; }
 }
 .sicherung__fertig { margin-top: 12px; }
 .sicherung__warnung { margin-top: 14px; }
+/* --- Benachrichtigungen --------------------------------------------------- */
+
+.glocke {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 10px 0 2px;
+}
+.glocke:empty { display: none; }
+.glocke__an { font-size: 13px; color: var(--ink-dim); }
+/* Der iPhone-Hinweis ist drei Zeilen Anleitung — der darf nicht in einer
+   Flex-Zeile zusammengequetscht werden. */
+.glocke .hint { flex: 1 1 100%; margin: 0; }
 
 /* --- Neues ---------------------------------------------------------------- */
 

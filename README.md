@@ -152,6 +152,38 @@ because assembling gigabytes of video in memory kills the tab of exactly the
 family with the most videos. What cannot be fetched is listed in
 `FEHLENDE-DATEIEN.txt` *inside* the archive — a backup is read when the
 original is gone, and by then any message on screen is long dismissed.
+**Notifications reach people who are not looking.** The news page only catches
+you once you open the app of your own accord; "Die Oma ist wieder zu Hause"
+should arrive without anyone having to check. So an announcement now wakes a
+database trigger, which wakes an edge function, which sends a Web Push to every
+device that asked for one.
+
+The encryption is written by hand rather than pulled from `npm:web-push`, and
+the reason is testability, not purity: a push cannot be delivered to a real
+phone from a build machine, so a library integration could only ever be hoped
+at. RFC 8291 §5, by contrast, publishes a complete worked example — fixed keys,
+fixed salt, and the exact expected body. `npm run check:push` recomputes it and
+compares byte for byte. (Its stated `Content-Length: 145` is wrong; the printed
+body is 144 bytes. That is the RFC's own erratum 5230, filed by its author —
+checked rather than shrugged off.)
+
+Three things shape the feature:
+
+* **Per device, not per person.** Phone, tablet and laptop are three
+  subscriptions. Turning it on in one place does not turn it on elsewhere.
+* **The iPhone needs the home screen.** Apple only allows Web Push once the
+  page is installed, so on an iPhone in a Safari tab `PushManager` is simply
+  absent. The page says so, with the two steps, instead of offering a button
+  that would do nothing.
+* **The service worker caches nothing.** It exists solely to receive pushes.
+  A worker that serves files from its own store keeps handing out yesterday's
+  version even after a hard reload — that confusion already happened here once
+  during a deploy, and building it in permanently would be a poor trade for a
+  slightly faster start.
+
+Dead subscriptions are deleted when a push service answers 404 or 410, and only
+devices that actually accepted a message get their "last reached" stamped —
+otherwise the very column you would use to spot a silent phone would lie.
 
 **The news page interrupts you, and that is the point.** A pinboard post waits
 to be found; an announcement stands in the way. That difference is the whole
