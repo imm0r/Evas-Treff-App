@@ -524,6 +524,15 @@ img { display: block; max-width: 100%; }
 }
 .neuigkeit__wer { flex: none; font-size: 12px; color: var(--ink-dim); }
 
+/* Das Archiv steht abgesetzt: es gehört nicht zu dem, was gerade neu ist. */
+.archiv {
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.archiv__open { width: 100%; }
+.archiv .aushang { border-left-color: var(--line); }
+
 .neuigkeit__bilder { display: flex; flex: none; gap: 3px; }
 .neuigkeit__bilder img {
   width: 40px; height: 40px;
