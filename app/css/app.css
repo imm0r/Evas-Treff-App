@@ -494,6 +494,21 @@ img { display: block; max-width: 100%; }
 /* Ungelesen wird hervorgehoben, gelesen bleibt lesbar: ein noch gültiger
    Aushang steht weiter da, soll aber nicht mehr rufen. */
 .aushang.is-new { border-left-color: var(--accent); }
+/* Zurückhaltend, bis man hinschaut — und dann rot. Ein Knopf, der etwas für
+   elf Leute löscht, darf nicht aussehen wie ein Schließen-Kreuz. */
+.aushang__delete {
+  position: absolute; top: 8px; right: 8px;
+  width: 30px; height: 30px; padding: 0;
+  border: none; border-radius: 8px;
+  background: transparent; color: var(--ink-dim);
+  font-size: 14px; line-height: 30px; cursor: pointer;
+  opacity: 0.55;
+}
+/* Derselbe Ton wie .btn--danger weiter oben, statt eines neu erfundenen. */
+.aushang__delete:hover, .aushang__delete:focus-visible {
+  opacity: 1; color: var(--danger); background: #33201b;
+}
+
 .aushang__text { margin: 0; white-space: pre-wrap; line-height: 1.5; }
 .aushang__meta { margin: 8px 0 0; font-size: 12px; color: var(--ink-dim); }
 

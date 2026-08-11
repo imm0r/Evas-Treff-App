@@ -189,11 +189,21 @@
       el('p', { class: 'aushang__meta', text: meta.join(' · ') })
     ]);
 
+    /*
+     * Ein Mülleimer, kein Kreuz.
+     *
+     * Hier stand ein × oben rechts an der Karte, und das liest jeder als
+     * „zumachen" — es löscht aber die Mitteilung für die GANZE Familie. Genau
+     * so ist es passiert: „Die News schließe ich über das x?" Nein.
+     *
+     * Die Seite hat gar kein Schließen. Man verlässt sie über „Zu den Alben",
+     * und sie hält einen beim nächsten Mal von selbst nicht mehr auf.
+     */
     if (state.me && state.me.isAdmin) {
       card.appendChild(el('button', {
-        class: 'comment__remove', title: 'Mitteilung entfernen',
+        class: 'aushang__delete', title: 'Diese Mitteilung für alle löschen',
         onclick: function () { removeAnnouncement(item); }
-      }, ['×']));
+      }, ['🗑']));
     }
     return card;
   }
@@ -205,7 +215,15 @@
   }
 
   async function removeAnnouncement(item) {
-    if (!global.confirm('Diese Mitteilung entfernen?')) return;
+    // Sagen, was wirklich passiert, und WELCHE es trifft. „Diese Mitteilung
+    // entfernen?" verschweigt beides — und wer mehrere untereinander stehen
+    // hat, weiß sonst nicht, an welcher er gerade gezogen hat.
+    var kurz = item.body.replace(/\s+/g, ' ').slice(0, 60);
+    if (item.body.length > 60) kurz += ' …';
+    if (!global.confirm(
+      'Diese Mitteilung für ALLE löschen?\n\n„' + kurz + '"\n\n' +
+      'Sie verschwindet auch bei denen, die sie noch nicht gelesen haben. ' +
+      'Das lässt sich nicht rückgängig machen.')) return;
     try {
       await PS.data.removeAnnouncement(item.id);
     } catch (error) {

@@ -1773,6 +1773,33 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     { id: 'an-alt', body: 'Der Zaun ist gestrichen.', until: null,
       created_at: '2026-07-01T09:00:00Z', profiles: { people: { name: 'Ben' } } }
   ];
+  /*
+   * Ein Knopf, der für elf Leute löscht, darf nicht wie „zumachen" aussehen.
+   *
+   * Hier stand ein × oben rechts, und genau so wurde es verstanden: „Die News
+   * schließe ich über das x?" — worauf die Rückfrage kam, ob gelöscht werden
+   * soll. Die Seite hat gar kein Schließen; man geht über „Zu den Alben".
+   */
+  check('mitteilung: der Löschknopf ist kein Schließen-Kreuz',
+    (await page.locator('.aushang__delete').first().textContent()) !== '×' &&
+    (await page.locator('.aushang .comment__remove').count()) === 0,
+    await page.locator('.aushang__delete').first().textContent());
+  check('mitteilung: und sagt im Titel, dass es alle trifft',
+    (await page.getAttribute('.aushang__delete', 'title')).includes('für alle'),
+    await page.getAttribute('.aushang__delete', 'title'));
+
+  // Die Rückfrage muss dasselbe sagen — und welche Mitteilung gemeint ist.
+  let gefragt = null;
+  page.once('dialog', (d) => { gefragt = d.message(); d.dismiss(); });
+  await page.locator('.aushang__delete').first().click();
+  await page.waitForFunction(() => true);
+  for (let i = 0; i < 30 && gefragt === null; i++) await page.waitForTimeout(50);
+  check('mitteilung: die Rückfrage nennt "für ALLE" und zitiert den Anfang',
+    /für ALLE/.test(gefragt || '') && /Oma/.test(gefragt || ''), String(gefragt));
+  check('mitteilung: und Abbrechen löscht nichts',
+    !back.deletes.some((d) => d.table === 'announcements'),
+    JSON.stringify(back.deletes));
+
   check('archiv: geschlossen, solange niemand fragt',
     (await page.locator('.archiv__open').count()) === 1 &&
     (await page.locator('.archiv .aushang').count()) === 0);
