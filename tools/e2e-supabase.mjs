@@ -735,6 +735,71 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
   await context.close();
 }
 
+// --- 2c. jede Seite lädt, was ihre Bausteine brauchen -----------------------
+{
+  /*
+   * Ein Modul, das ein anderes benutzt, dessen Datei die Seite nicht lädt.
+   *
+   * Genau das ist passiert: `neues.html` lud `album.js` nicht, `people.js`
+   * ruft darin `PS.album.slug()` auf, und heraus kam ein „Cannot read
+   * properties of undefined" — aber erst in der echten App, weil der Aufruf
+   * hinter einer Bedingung liegt, die im Test nie wahr wurde.
+   *
+   * Deshalb hier nicht die einzelne Stelle prüfen, sondern die Klasse: JEDE
+   * Seite einmal mit vollständigen Daten öffnen und auf Fehler hören. Eine
+   * vergessene Skriptzeile fällt dann sofort auf, egal in welchem Modul sie
+   * fehlt.
+   */
+  const seiten = ['/index.html', '/upload.html', '/board.html', '/dates.html',
+    '/rezepte.html', '/neues.html', '/admin.html'];
+
+  for (const seite of seiten) {
+    const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+    const page = await context.newPage();
+    const errors = [];
+    page.on('pageerror', (e) => errors.push(String(e)));
+    page.on('console', (m) => { if (m.type() === 'error' && !/status of 40[0-9]/.test(m.text())) errors.push(m.text()); });
+    const back = makeBackend();
+    // Überall etwas zu sehen, damit die Seiten nicht in ihrem Leer-Zweig
+    // stehen bleiben und die halbe Zeichenarbeit überspringen.
+    back.albums = [
+      { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 1 }] }
+    ];
+    back.people = [
+      { name: 'Ben',  face_x: 0.5,  face_y: 0.4,  aliases: [] },
+      { name: 'Ines', face_x: 0.13, face_y: 0.39, aliases: [] }
+    ];
+    back.photos = [
+      { id: 'ph-1', album_id: 'alb-1', storage_path: 'evas-treff/a.jpg',
+        thumb_path: 'evas-treff/a_thumb.jpg', content_hash: 'a', media_type: 'image',
+        taken_at: '2026-08-07T21:33:00Z', uploader_id: 'user-1', uploader_name: 'Ben', comments: [] }
+    ];
+    back.posts = [{ id: 'bp-1', body: 'Hallo', image_path: null, author_id: 'user-9',
+      author_name: 'Ines', created_at: '2026-08-07T10:00:00Z' }];
+    back.events = [{ id: 'ev-1', title: 'Grillen', starts_on: '2026-09-01', ends_on: null,
+      starts_at: null, place: 'Garten', note: null, created_by: 'user-1',
+      profiles: { people: { name: 'Ben' } }, event_replies: [] }];
+    back.recipes = [{ id: 'rz-1', slug: 'kuchen', title: 'Kuchen', servings: 4,
+      ingredients: 'Mehl', steps: 'Backen', note: null, created_by: 'user-1',
+      created_at: '2026-08-01T10:00:00Z', profiles: { people: { name: 'Ben' } } }];
+    back.announcements = [{ id: 'an-1', body: 'Hallo Familie', until: null,
+      created_at: '2026-08-10T09:00:00Z', profiles: { people: { name: 'Ben' } } }];
+    back.news.announcements = { unread: 1, items: [
+      { id: 'an-1', body: 'Hallo Familie', until: null, author: 'Ben',
+        at: '2026-08-10T09:00:00Z', unread: true }] };
+    await stub(page, back);
+
+    await page.goto(origin + seite + SESSION);
+    await page.waitForSelector('.topbar, .gate, .status', { timeout: 15000 });
+    // Kurz laufen lassen: der Fehler von damals kam erst beim Zeichnen der
+    // Namen, nicht beim Aufbau des Gerüsts.
+    await page.waitForTimeout(700);
+    check('aufbau: ' + seite + ' lädt alles, was ihre Bausteine brauchen',
+      errors.length === 0, errors.join('\n'));
+    await context.close();
+  }
+}
+
 // --- 3. hochladen ----------------------------------------------------------
 {
   const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
@@ -1613,6 +1678,19 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
 
   back.albums = [
     { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 9 }] }
+  ];
+  /*
+   * Die Gesichter-Karte gehört dazu, auch wenn hier kein Gesicht geprüft wird.
+   *
+   * Ohne sie steigt `PS.people.display()` sofort wieder aus, und der Weg, der
+   * dahinter liegt, wird nie betreten. Genau daran ist der erste Versuch
+   * gescheitert: `neues.html` lud `album.js` nicht, `people.js` braucht es —
+   * und der Test lief trotzdem grün, weil er nie so weit kam.
+   */
+  back.people = [
+    { name: 'Ben',   face_x: 0.5,  face_y: 0.4, aliases: [] },
+    { name: 'Ines',  face_x: 0.13, face_y: 0.39, aliases: [] },
+    { name: 'Maria', face_x: 0.78, face_y: 0.39, aliases: [] }
   ];
   back.news = {
     since: '2026-08-01T00:00:00Z',
