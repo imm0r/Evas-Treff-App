@@ -286,6 +286,22 @@
     return response.json();
   };
 
+  /**
+   * Eine Datenbankfunktion aufrufen.
+   *
+   * Bisher kam alles über einzelne Tabellenabfragen. Für „was gibt es Neues?"
+   * wären das fünf Rundreisen bei jedem Betreten der Seite — als Funktion ist
+   * es eine, und was „neu" heißt, steht an einer Stelle statt in fünf
+   * Aufrufern.
+   */
+  sb.rpc = async function (name, args) {
+    var response = await call('/rest/v1/rpc/' + name, {
+      method: 'POST',
+      body: JSON.stringify(args || {})
+    });
+    return response.json();
+  };
+
   sb.patch = async function (table, query, patch) {
     await call('/rest/v1/' + table + '?' + query, {
       method: 'PATCH',

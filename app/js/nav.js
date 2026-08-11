@@ -11,6 +11,7 @@
   var PS = global.PS || (global.PS = {});
 
   var SECTIONS = [
+    { page: 'neues.html', label: 'Neues', icon: '📣' },
     { page: 'index.html', label: 'Alben', icon: '📷' },
     { page: 'dates.html', label: 'Termine', icon: '📅' },
     { page: 'board.html', label: 'Pinnwand', icon: '📌' },

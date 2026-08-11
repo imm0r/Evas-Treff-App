@@ -475,6 +475,62 @@ img { display: block; max-width: 100%; }
 .date__fields { display: flex; gap: 8px; }
 .date__fields .field { flex: 1; min-width: 0; }
 
+/* --- Neues ---------------------------------------------------------------- */
+
+.neues { max-width: 620px; margin: 0 auto; padding: 0 var(--pad) 12px; }
+.neues__tools { margin: 12px 0 4px; }
+
+/* Ein Aushang sieht anders aus als eine Rubrik darunter — er ist der Grund,
+   warum die Seite überhaupt aufgeht. */
+.aushang {
+  position: relative;
+  margin-top: 12px;
+  padding: 15px 40px 13px 16px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+/* Ungelesen wird hervorgehoben, gelesen bleibt lesbar: ein noch gültiger
+   Aushang steht weiter da, soll aber nicht mehr rufen. */
+.aushang.is-new { border-left-color: var(--accent); }
+.aushang__text { margin: 0; white-space: pre-wrap; line-height: 1.5; }
+.aushang__meta { margin: 8px 0 0; font-size: 12px; color: var(--ink-dim); }
+
+.neuigkeit {
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.neuigkeit__head {
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 8px;
+  font-family: var(--display); font-size: 15px;
+}
+.neuigkeit__icon { font-size: 16px; }
+
+.neuigkeit__zeile {
+  display: flex; align-items: center; gap: 10px;
+  padding: 7px 4px;
+  border-radius: 6px;
+  color: inherit; text-decoration: none;
+}
+.neuigkeit__zeile:hover { background: var(--surface-2); }
+/* Der Text darf schrumpfen, die Bilder nicht — sonst quetscht ein langer
+   Kommentar die Vorschau auf null. */
+.neuigkeit__wort {
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.neuigkeit__wer { flex: none; font-size: 12px; color: var(--ink-dim); }
+
+.neuigkeit__bilder { display: flex; flex: none; gap: 3px; }
+.neuigkeit__bilder img {
+  width: 40px; height: 40px;
+  object-fit: cover; border-radius: 4px;
+  background: var(--surface-2);
+}
+
 /* --- Videos --------------------------------------------------------------- */
 
 /* Eine Videokachel IST ein Standbild — ohne Abzeichen tippt man sie an und
