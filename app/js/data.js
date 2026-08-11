@@ -659,6 +659,87 @@
     await PS.sb.patch('recipe_photos', 'id=eq.' + photo.id, { sort_order: lowest - 1 });
   };
 
+  // --- Neuigkeiten ------------------------------------------------------------
+
+  /*
+   * Was es für mich Neues gibt — Mitteilungen zuerst, dann der Rest.
+   *
+   * Eine einzige Rundreise: die Datenbankfunktion beantwortet alles auf
+   * einmal. Nur die Vorschaubilder müssen danach noch unterschrieben werden,
+   * und das ist derselbe Sammelaufruf wie überall sonst.
+   */
+  data.news = async function () {
+    var raw = await PS.sb.rpc('news_for_me');
+
+    var paths = [];
+    (raw.photos.albums || []).forEach(function (album) {
+      (album.thumbs || []).forEach(function (path) { if (path) paths.push(path); });
+    });
+    var signed = await PS.sb.signPaths('photos', paths, SIGN_SECONDS);
+
+    var announcements = (raw.announcements.items || []).map(function (row) {
+      return {
+        id: row.id,
+        body: row.body,
+        until: row.until || null,
+        author: row.author || null,
+        at: new Date(row.at),
+        unread: !!row.unread
+      };
+    });
+
+    return {
+      since: raw.since ? new Date(raw.since) : null,
+      announcements: announcements,
+      // Nur Ungelesenes öffnet die Seite von selbst. Ein Aushang, der noch
+      // gilt, steht darauf — hält aber niemanden mehr auf.
+      unreadAnnouncements: Number(raw.announcements.unread) || 0,
+      photos: {
+        count: Number(raw.photos.count) || 0,
+        albums: (raw.photos.albums || []).map(function (album) {
+          return {
+            slug: album.slug,
+            title: album.title,
+            count: Number(album.count) || 0,
+            videos: Number(album.videos) || 0,
+            thumbs: (album.thumbs || []).map(function (path) { return signed[path] || null; })
+              .filter(Boolean)
+          };
+        })
+      },
+      comments: { count: Number(raw.comments.count) || 0, items: raw.comments.items || [] },
+      posts: { count: Number(raw.posts.count) || 0, items: raw.posts.items || [] },
+      recipes: { count: Number(raw.recipes.count) || 0, items: raw.recipes.items || [] },
+      events: { count: Number(raw.events.count) || 0, items: raw.events.items || [] }
+    };
+  };
+
+  /** Was die Seite aufhält: Ungelesenes. Alles andere steht nur da. */
+  data.newsPending = function (news) {
+    return news.unreadAnnouncements + news.photos.count + news.comments.count +
+      news.posts.count + news.recipes.count + news.events.count;
+  };
+
+  data.markNewsSeen = async function () {
+    var user = PS.sb.user();
+    if (!user) return;
+    await PS.sb.patch('profiles', 'id=eq.' + user.id,
+      { news_seen_at: new Date().toISOString() });
+  };
+
+  data.addAnnouncement = async function (body, until) {
+    var rows = await PS.sb.insert('announcements', {
+      body: body,
+      until: until || null,
+      created_by: PS.sb.user() && PS.sb.user().id
+    });
+    return rows[0];
+  };
+
+  data.removeAnnouncement = async function (id) {
+    await PS.sb.remove('announcements', 'id=eq.' + id);
+  };
+
   // --- people ---------------------------------------------------------------
 
   data.people = async function () {

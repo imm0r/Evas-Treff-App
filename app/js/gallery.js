@@ -42,6 +42,7 @@
     // from the invitation, and the server records it on everything you write.
     if (state.me && state.me.name) PS.name(state.me.name);
     document.title = TITLE;
+    if (await abgebogen()) return;
     renderShell();
     load(true);
 
@@ -51,6 +52,39 @@
     document.addEventListener('visibilitychange', function () {
       if (document.visibilityState === 'visible') poll();
     });
+  }
+
+  /*
+   * Beim Betreten zur Neues-Seite abbiegen, wenn es dort etwas gibt.
+   *
+   * Nur beim ERSTEN Aufruf in dieser Sitzung. Ohne diese Sperre wäre eine
+   * Schleife möglich, die die Familie komplett aussperrt: die Neues-Seite
+   * setzt beim Anzeigen den Merker, aber wenn das Setzen scheitert (kein Netz,
+   * ein Rechtefehler), gäbe es beim Zurückgehen wieder Neuigkeiten und wieder
+   * einen Sprung. Nach der Sperre kommt man in jedem Fall in die Alben.
+   *
+   * Alles andere als ein glatter Ja/Nein-Bescheid führt geradeaus: eine
+   * kaputte Neuigkeitsabfrage darf die Alben nicht blockieren.
+   */
+  async function abgebogen() {
+    var wohin = 'neues.html';
+    if (location.pathname.indexOf(wohin) >= 0) return false;
+    try {
+      if (sessionStorage.getItem('neues-geprueft')) return false;
+      sessionStorage.setItem('neues-geprueft', '1');
+    } catch (error) {
+      // Ein Browser ohne sessionStorage (privater Modus mancher Geräte) darf
+      // hier nicht abstürzen — dann eben kein Umweg.
+      return false;
+    }
+    try {
+      var news = await PS.data.news();
+      if (PS.data.newsPending(news) > 0) {
+        location.replace(wohin);
+        return true;
+      }
+    } catch (error) { /* geradeaus */ }
+    return false;
   }
 
   function renderShell() {
