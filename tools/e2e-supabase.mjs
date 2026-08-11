@@ -86,6 +86,60 @@ async function makeJpeg(page, w, h, hue, label) {
   }, [w, h, hue, label]));
 }
 
+/*
+ * Ein ECHTES Video, im Browser aufgenommen.
+ *
+ * Kein erfundener Blob mit einem Videonamen: die ganze Kette hängt daran, dass
+ * der Browser die Datei wirklich dekodiert — Maße, Dauer, Standbild. Ein
+ * Attrappen-Blob würde genau den Teil überspringen, der schiefgehen kann.
+ */
+async function makeWebm(page, w, h, hue, ms) {
+  return Buffer.from(await page.evaluate(async ([w, h, hue, ms]) => {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = h;
+    const x = c.getContext('2d');
+    const stream = c.captureStream(25);
+    const chunks = [];
+    const rec = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    rec.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+    const done = new Promise((r) => { rec.onstop = r; });
+    rec.start();
+
+    // Etwas Bewegung, damit es nicht ein einziges Standbild ist — und eine
+    // kräftige Farbe, an der sich später prüfen lässt, ob das Vorschaubild
+    // wirklich aus dem Video kommt und nicht schwarz ist.
+    const started = performance.now();
+    await new Promise((resolve) => {
+      (function frame() {
+        const t = performance.now() - started;
+        x.fillStyle = `hsl(${hue},90%,50%)`;
+        x.fillRect(0, 0, w, h);
+        x.fillStyle = '#000';
+        x.fillRect((t / ms) * w, h / 3, w / 8, h / 3);
+        if (t < ms) requestAnimationFrame(frame); else resolve();
+      })();
+    });
+
+    rec.stop();
+    await done;
+    const blob = new Blob(chunks, { type: 'video/webm' });
+    return Array.from(new Uint8Array(await blob.arrayBuffer()));
+  }, [w, h, hue, ms]));
+}
+
+/** Die Farbe in der Mitte eines JPEGs — beantwortet "ist das Bild schwarz?". */
+async function centrePixel(page, bytes) {
+  return page.evaluate(async (data) => {
+    const blob = new Blob([new Uint8Array(data)], { type: 'image/jpeg' });
+    const bitmap = await createImageBitmap(blob);
+    const c = document.createElement('canvas');
+    c.width = bitmap.width; c.height = bitmap.height;
+    c.getContext('2d').drawImage(bitmap, 0, 0);
+    const p = c.getContext('2d').getImageData(Math.floor(bitmap.width / 2), 4, 1, 1).data;
+    return { r: p[0], g: p[1], b: p[2], width: bitmap.width, height: bitmap.height };
+  }, Array.from(bytes));
+}
+
 /** Width and height straight out of a JPEG's frame header. */
 function jpegSize(bytes) {
   for (let i = 2; i + 9 < bytes.length;) {
@@ -707,6 +761,199 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
 
   await shot(page, '3-hochladen');
   check('hochladen: keine Fehler', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 3c. ein Video geht unverändert hoch, mit Standbild ---------------------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 0 }] }
+  ];
+
+  await page.goto(origin + '/upload.html' + SESSION);
+  await page.waitForSelector('.drop__buttons .btn:not(.btn--camera):not([disabled])');
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  const clip = await makeWebm(scratch, 640, 480, 300, 1200);
+  check('video: die Aufnahme ist wirklich ein WebM',
+    clip.length > 2000 && clip[0] === 0x1a && clip[1] === 0x45,
+    `${clip.length} Bytes, beginnt mit ${clip[0]?.toString(16)} ${clip[1]?.toString(16)}`);
+
+  await page.setInputFiles('input[type=file]:not([capture])',
+    { name: 'Geburtstag.webm', mimeType: 'video/webm', buffer: clip });
+  await page.waitForSelector('.job--done', { timeout: 60000 });
+  await page.waitForFunction(() => document.querySelector('.summary:not(.is-hidden)'));
+
+  const row = back.inserts.find((i) => i.table === 'photos').row;
+  check('video: wird als Video eingetragen', row.media_type === 'video', JSON.stringify(row));
+  check('video: mit den Maßen aus der Datei',
+    row.width === 640 && row.height === 480, `${row.width}x${row.height}`);
+
+  // Die Datei behält ihre Endung: ein .jpg, in dem ein Film steckt, öffnet
+  // auf keinem Gerät.
+  check('video: liegt unter seiner eigenen Endung',
+    row.storage_path.endsWith('.webm') && row.thumb_path.endsWith('_thumb.jpg'),
+    row.storage_path + ' / ' + row.thumb_path);
+  check('video: unverändert hochgeladen, nicht neu kodiert',
+    images.get(row.storage_path).length === clip.length,
+    `${images.get(row.storage_path).length} statt ${clip.length}`);
+
+  // Die Laufzeit: frisch aufgenommene WebM melden erst Infinity, und ohne den
+  // Umweg über das Dateiende stünde hier gar nichts.
+  check('video: die Laufzeit wurde ermittelt, trotz fehlender Angabe in der Datei',
+    row.duration_seconds > 0.5 && row.duration_seconds < 5, String(row.duration_seconds));
+
+  /*
+   * Der Kern: das Standbild kommt WIRKLICH aus dem Video. Ein schwarzes Bild
+   * wäre der Normalfall, wenn man den ersten Moment nimmt — und es sähe in der
+   * Galerie aus wie ein kaputtes Foto.
+   */
+  const poster = await centrePixel(scratch, images.get(row.thumb_path));
+  check('video: das Standbild hat die Maße des Videos',
+    poster.width === 480 && poster.height === 360, JSON.stringify(poster));
+  check('video: und es ist ein echtes Bild, kein schwarzes Feld',
+    poster.r + poster.g + poster.b > 120, JSON.stringify(poster));
+  await scratch.close();
+
+  // Ein Video ist kein Foto, und der Satz darunter muss das sagen.
+  check('video: die Zählung nennt es ein Video, kein Foto',
+    (await page.textContent('.hint')) === 'Im Album ist 1 Video.',
+    await page.textContent('.hint'));
+  check('video: und die Schlusszeile ebenso',
+    (await page.textContent('.summary strong')) === '1 Video ist im Album.',
+    await page.textContent('.summary strong'));
+
+  await shot(page, '3c-video-hochladen');
+  check('video: keine Fehler beim Hochladen', errors.length === 0, errors.join('\n'));
+  await context.close();
+}
+
+// --- 3d. was der Browser nicht lesen kann, geht gar nicht erst hoch ---------
+{
+  const context = await browser.newContext({ viewport: { width: 414, height: 860 } });
+  const page = await context.newPage();
+  const back = makeBackend();
+  await stub(page, back);
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 0 }] }
+  ];
+
+  await page.goto(origin + '/upload.html' + SESSION);
+  await page.waitForSelector('.drop__buttons .btn:not(.btn--camera):not([disabled])');
+
+  /*
+   * Genau der HEVC-Fall, nur sicher herstellbar: eine Datei, die sich als
+   * Video ausgibt und die dieser Browser nicht dekodieren kann. Es darf NICHTS
+   * hochgehen — ein Video ohne Standbild wäre in der Galerie eine leere
+   * Kachel, und ohne Vorwarnung wären erst 80 MB durch das Datenvolumen.
+   */
+  await page.setInputFiles('input[type=file]:not([capture])',
+    { name: 'Oma.mov', mimeType: 'video/quicktime', buffer: Buffer.alloc(80000, 7) });
+  await page.waitForSelector('.job--error', { timeout: 60000 });
+
+  check('video: unlesbares Format lädt gar nichts hoch',
+    back.uploads.length === 0 && !back.inserts.some((i) => i.table === 'photos'),
+    JSON.stringify(back.uploads));
+  const satz = await page.textContent('.job--error .job__state');
+  check('video: und sagt auf Deutsch, woran es liegt',
+    /Format|lesen/i.test(satz) && !/undefined|\[object/.test(satz), satz);
+  await context.close();
+}
+
+// --- 3e. in der Galerie: Abzeichen auf der Kachel, Abspieler im Fenster -----
+{
+  const context = await browser.newContext({ viewport: { width: 900, height: 900 } });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  const back = makeBackend();
+  await stub(page, back);
+
+  const scratch = await context.newPage();
+  await scratch.goto('about:blank');
+  const clip = await makeWebm(scratch, 320, 240, 200, 900);
+  const standbild = await makeJpeg(scratch, 320, 240, 200, '▶');
+  await scratch.close();
+  images.set('evas-treff/vid1.webm', clip);
+  images.set('evas-treff/vid1_thumb.jpg', standbild);
+  images.set('evas-treff/foto1.jpg', await (async () => {
+    const s2 = await context.newPage(); await s2.goto('about:blank');
+    const b = await makeJpeg(s2, 320, 240, 40, 'Foto'); await s2.close(); return b;
+  })());
+  images.set('evas-treff/foto1_thumb.jpg', images.get('evas-treff/foto1.jpg'));
+
+  back.albums = [
+    { id: 'alb-1', slug: 'evas-treff', title: "Eva's Treff", event_date: '2026-08-07', photos: [{ count: 2 }] }
+  ];
+  back.photos = [
+    { id: 'ph-v', album_id: 'alb-1', storage_path: 'evas-treff/vid1.webm',
+      thumb_path: 'evas-treff/vid1_thumb.jpg', content_hash: 'vid1',
+      media_type: 'video', duration_seconds: 64.2,
+      taken_at: '2026-08-07T21:33:00Z', uploader_id: 'user-1', uploader_name: 'Maria', comments: [] },
+    { id: 'ph-f', album_id: 'alb-1', storage_path: 'evas-treff/foto1.jpg',
+      thumb_path: 'evas-treff/foto1_thumb.jpg', content_hash: 'foto1',
+      media_type: 'image', duration_seconds: null,
+      taken_at: '2026-08-07T20:10:00Z', uploader_id: 'user-1', uploader_name: 'Maria', comments: [] }
+  ];
+
+  await page.goto(origin + '/index.html' + SESSION);
+  await page.waitForSelector('.tile');
+  check('video: nur das Video bekommt ein Abzeichen',
+    (await page.locator('.tile__play').count()) === 1 &&
+    (await page.locator('.tile--video').count()) === 1);
+  // 64,2 Sekunden sind 1:04 — nicht "64" und nicht "1.07 Minuten".
+  check('video: mit der Laufzeit, wie sie auf jedem Abspielknopf steht',
+    (await page.textContent('.tile__play')) === '▶ 1:04',
+    await page.textContent('.tile__play'));
+
+  await page.locator('.tile--video').click();
+  await page.waitForSelector('.lightbox:not(.is-hidden)');
+  await page.waitForSelector('.lightbox__video:not(.is-hidden)');
+
+  // Wirklich abspielbar, nicht nur eingebaut: der Browser muss Bilddaten haben.
+  const spielt = await page.evaluate(async () => {
+    const v = document.querySelector('.lightbox__video');
+    if (v.readyState < 2) await new Promise((r) => { v.onloadeddata = r; setTimeout(r, 8000); });
+    return { readyState: v.readyState, w: v.videoWidth, h: v.videoHeight, hasPoster: !!v.poster };
+  });
+  check('video: die Lightbox spielt es wirklich ab',
+    spielt.readyState >= 2 && spielt.w === 320 && spielt.h === 240, JSON.stringify(spielt));
+  check('video: mit dem Standbild als Vorschau, damit nichts schwarz aufblitzt',
+    spielt.hasPoster);
+  // Beide liegen im selben Kasten: bleibt das Bild stehen, steht dasselbe
+  // Standbild NEBEN dem Abspieler. Genau so sah es zuerst aus.
+  check('video: und ohne ein zweites Standbild daneben',
+    await page.locator('.lightbox__image').isHidden());
+  check('video: der Download behält die Endung des Videos',
+    (await page.getAttribute('[title=Speichern]', 'download')).endsWith('.webm'),
+    await page.getAttribute('[title=Speichern]', 'download'));
+  await shot(page, '3e-video-ansehen');
+
+  // Weiterblättern auf das Foto: der Ton darf nicht weiterlaufen und die
+  // Datei nicht weiter geladen werden.
+  await page.click('.lightbox__nav--next');
+  const danach = await page.evaluate(() => {
+    const v = document.querySelector('.lightbox__video');
+    return { versteckt: v.classList.contains('is-hidden'), quelle: v.getAttribute('src'), pausiert: v.paused };
+  });
+  check('video: beim Weiterblättern hört es auf und lädt nicht weiter',
+    danach.versteckt && !danach.quelle && danach.pausiert, JSON.stringify(danach));
+  // ... und das Foto danach ist wieder da, statt mit dem Video verschwunden
+  // zu sein.
+  await page.waitForSelector('.lightbox__image:not(.is-hidden)');
+  check('video: zurück beim Foto ist das Bild wieder sichtbar',
+    await page.locator('.lightbox__image').isVisible());
+
+  check('video: keine Fehler in der Galerie', errors.length === 0, errors.join('\n'));
   await context.close();
 }
 

@@ -18,15 +18,38 @@
   var PHOTO_EDGE = 2560, PHOTO_QUALITY = 0.85;
   var THUMB_EDGE = 480, THUMB_QUALITY = 0.7;
 
+  /*
+   * Die Obergrenze für ein Video. Dieselbe Zahl steht am Speicher-Eimer, und
+   * das ist Absicht: sie hier NICHT zu kennen hieße, ein Video erst über die
+   * ganze Mobilverbindung zu schicken und dann eine Absage zu bekommen.
+   *
+   * Die Grenze kommt nicht vom Tarif — dort wären 100 GB — sondern vom
+   * Upload-Weg: er läuft in einem Rutsch, ohne Wiederaufsetzen. Was mittendrin
+   * abbricht, fängt von vorn an, und das will niemand bei 500 MB auf dem
+   * Handynetz.
+   */
+  var MAX_VIDEO_BYTES = 200 * 1024 * 1024;
+
+  // Wie viel vom Video für die Doppelt-Erkennung gelesen wird. Ein Foto wird
+  // ganz gehasht, ein Video nicht: `arrayBuffer()` auf 200 MB legt die Datei
+  // komplett in den Arbeitsspeicher, und auf einem älteren Telefon ist das der
+  // Absturz. Der Anfang plus die Größe unterscheidet zwei Aufnahmen sicher
+  // genug für eine Familie — zwei verschiedene Videos müssten in beidem
+  // übereinstimmen.
+  var VIDEO_HASH_BYTES = 1024 * 1024;
+
   var state = {
     me: null,
     album: null,      // which album the photos go into
     people: null,     // the face map, or null when the hub has no group photo
     typing: false,    // someone chose to type their name instead
     known: new Set(), // content hashes already in the album
+    photos: 0,        // wie viel wovon schon drin liegt — für den Satz darunter
+    videos: 0,
     jobs: [],
     running: 0,
     uploaded: 0,
+    uploadedVideos: 0,
     savedBytes: 0
   };
 
@@ -61,7 +84,10 @@
       document.title = 'Hochladen · ' + state.album.title;
       nodes.back.href = 'index.html?album=' + encodeURIComponent(state.album.slug);
 
-      state.known = await PS.data.knownHashes(state.album.id);
+      var index = await PS.data.albumIndex(state.album.id);
+      state.known = index.hashes;
+      state.photos = index.photos;
+      state.videos = index.videos;
       state.people = await PS.people.load();
       showCount();
     } catch (error) {
@@ -84,9 +110,18 @@
 
   /** Kept in step with every upload, so it never contradicts the summary below it. */
   function showCount() {
-    nodes.status.textContent = state.known.size
-      ? 'Im Album sind ' + PS.plural(state.known.size, 'Foto', 'Fotos') + '.'
-      : 'Noch keine Fotos im Album — mach den Anfang.';
+    if (!state.known.size) {
+      nodes.status.textContent = 'Noch nichts im Album — mach den Anfang.';
+      return;
+    }
+    // "Im Album sind 3 Fotos" wäre falsch, wenn zwei davon Filme sind. Und
+    // "sind 1 Foto" war schon vorher schief.
+    var teile = [];
+    if (state.photos) teile.push(PS.plural(state.photos, 'Foto', 'Fotos'));
+    if (state.videos) teile.push(PS.plural(state.videos, 'Video', 'Videos'));
+    var eins = state.photos + state.videos === 1;
+    nodes.status.textContent = 'Im Album ' + (eins ? 'ist ' : 'sind ') +
+      teile.join(' und ') + '.';
   }
 
   function applyPeople() {
@@ -163,8 +198,15 @@
     // with it, the camera opens straight away. At a party the second one is
     // what people actually want, so it gets to be the big button — and the
     // photo is in the album seconds after the shutter.
-    nodes.input = el('input', { type: 'file', accept: 'image/*', multiple: 'multiple', class: 'visually-hidden' });
-    nodes.camera = el('input', { type: 'file', accept: 'image/*', capture: 'environment', class: 'visually-hidden' });
+    nodes.input = el('input', {
+      type: 'file', accept: 'image/*,video/*', multiple: 'multiple', class: 'visually-hidden'
+    });
+    // Der Kameraknopf bleibt beim Foto: `capture` mit beiden Typen öffnet auf
+    // vielen Telefonen einen Auswahldialog statt der Kamera, und damit wäre
+    // der Sinn des Knopfes weg — ein Bild in Sekunden nach dem Auslösen.
+    nodes.camera = el('input', {
+      type: 'file', accept: 'image/*', capture: 'environment', class: 'visually-hidden'
+    });
 
     [nodes.input, nodes.camera].forEach(function (input) {
       input.addEventListener('change', function () {
@@ -192,7 +234,7 @@
       class: 'btn btn--primary btn--big',
       disabled: 'disabled',
       onclick: opens(nodes.input)
-    }, ['Fotos auswählen']);
+    }, ['Fotos & Videos auswählen']);
 
     nodes.status = el('p', { class: 'hint', text: 'Album wird geladen …' });
     nodes.list = el('div', { class: 'queue' });
@@ -201,7 +243,7 @@
     var drop = el('div', { class: 'drop' }, [
       el('div', { class: 'drop__emoji', text: '📸' }),
       el('div', { class: 'drop__buttons' }, [nodes.shoot, nodes.pick]),
-      el('p', { class: 'drop__hint', text: 'oder Fotos einfach hierher ziehen' })
+      el('p', { class: 'drop__hint', text: 'oder Fotos und Videos einfach hierher ziehen' })
     ]);
     ['dragenter', 'dragover'].forEach(function (type) {
       drop.addEventListener(type, function (e) { e.preventDefault(); drop.classList.add('is-over'); });
@@ -253,12 +295,28 @@
 
   function accept(files) {
     var images = files.filter(function (file) {
-      return file.type.indexOf('image/') === 0 || /\.(jpe?g|png|heic|heif|webp|gif)$/i.test(file.name);
+      return file.type.indexOf('image/') === 0 || /\.(jpe?g|png|heic|heif|webp|gif)$/i.test(file.name) ||
+        PS.video.looksLike(file);
     });
     if (!images.length) {
-      PS.toast('Darin waren keine Bilder.');
+      PS.toast('Darin waren weder Bilder noch Videos.');
       return;
     }
+
+    // Zu große Videos gar nicht erst in die Schlange stellen. Sie würden
+    // hochgeladen, abgewiesen und wären dann trotzdem einmal durch das
+    // Datenvolumen gegangen.
+    var zuGross = images.filter(function (file) {
+      return PS.video.looksLike(file) && file.size > MAX_VIDEO_BYTES;
+    });
+    if (zuGross.length) {
+      images = images.filter(function (file) { return zuGross.indexOf(file) < 0; });
+      PS.toast(PS.plural(zuGross.length, 'Ein Video ist', 'Videos sind') +
+        ' größer als ' + PS.formatBytes(MAX_VIDEO_BYTES) +
+        ' — bitte auf dem Telefon kürzen und nochmal versuchen.', 'error');
+      if (!images.length) return;
+    }
+
     images.forEach(function (file) {
       var job = { file: file, state: 'warten', error: null, node: null, uploader: PS.name() };
       state.jobs.push(job);
@@ -304,6 +362,10 @@
 
   async function run(job) {
     try {
+      if (PS.video.looksLike(job.file)) {
+        await runVideo(job);
+        return;
+      }
       mark(job, 'wird verkleinert …', 'busy');
       var buffer = await job.file.arrayBuffer();
       var hash = await PS.sha8(buffer);
@@ -350,6 +412,7 @@
       });
 
       state.known.add(hash);
+      state.photos++;
       showCount();
       state.uploaded++;
       state.savedBytes += Math.max(0, job.file.size - photo.size - thumb.size);
@@ -371,6 +434,60 @@
     }
   }
 
+  /*
+   * Ein Video geht unverändert hoch — nur das Standbild wird hier gemacht.
+   *
+   * Kein Verkleinern, kein Neukodieren: das ginge im Browser nur mit einer
+   * mitgelieferten Bibliothek und Minuten Rechenzeit auf dem Telefon. Was
+   * gefilmt wurde, wird auch gespeichert.
+   */
+  async function runVideo(job) {
+    mark(job, 'Video wird gelesen …', 'busy');
+
+    // Nur den Anfang für die Doppelt-Erkennung, siehe VIDEO_HASH_BYTES.
+    var kopf = await job.file.slice(0, VIDEO_HASH_BYTES).arrayBuffer();
+    var hash = await PS.sha8(kopf) + '-' + job.file.size.toString(36);
+
+    if (state.known.has(hash)) {
+      job.state = 'doppelt';
+      mark(job, 'war schon im Album', 'skip');
+      return;
+    }
+
+    /*
+     * Hier entscheidet sich die HEVC-Frage, und zwar am Gerät statt an einer
+     * Vermutung: kann dieser Browser das Video nicht lesen, sagt `inspect` das
+     * — bevor irgendetwas über die Leitung geht.
+     */
+    var info = await PS.video.inspect(job.file);
+
+    job._thumb.style.backgroundImage = 'url(' + URL.createObjectURL(info.poster) + ')';
+    var dauer = info.duration ? ' · ' + PS.video.formatDuration(info.duration) : '';
+    mark(job, 'wird hochgeladen … (' + PS.formatBytes(job.file.size) + dauer + ')', 'busy');
+
+    await PS.data.addPhoto(state.album, {
+      hash: hash,
+      full: job.file,
+      thumb: info.poster,
+      isVideo: true,
+      duration: info.duration,
+      extension: PS.video.extensionFor(job.file),
+      contentType: job.file.type || 'video/mp4',
+      takenAt: new Date(job.file.lastModified || Date.now()),
+      uploader: job.uploader,
+      width: info.width,
+      height: info.height
+    });
+
+    state.known.add(hash);
+    state.videos++;
+    showCount();
+    state.uploaded++;
+    state.uploadedVideos++;
+    job.state = 'fertig';
+    mark(job, 'fertig', 'done');
+  }
+
   function finishIfDone() {
     var open = state.jobs.some(function (j) { return j.state === 'warten' || j.state === 'läuft'; });
     guardNavigation();
@@ -379,9 +496,13 @@
     var failed = state.jobs.filter(function (j) { return j.state === 'fehler'; }).length;
     nodes.summary.className = 'summary' + (failed ? ' summary--warn' : ' summary--ok');
     nodes.summary.innerHTML = '';
+    var fotos = state.uploaded - state.uploadedVideos;
+    var was = [];
+    if (fotos) was.push(PS.plural(fotos, 'Foto', 'Fotos'));
+    if (state.uploadedVideos) was.push(PS.plural(state.uploadedVideos, 'Video', 'Videos'));
     nodes.summary.appendChild(el('strong', {
       text: state.uploaded
-        ? PS.plural(state.uploaded, 'Foto ist im Album', 'Fotos sind im Album') + '.'
+        ? was.join(' und ') + (state.uploaded === 1 ? ' ist' : ' sind') + ' im Album.'
         : 'Es wurde nichts Neues hochgeladen.'
     }));
     if (state.savedBytes > 0) {
@@ -391,7 +512,7 @@
     }
     if (failed) {
       nodes.summary.appendChild(el('span', {
-        text: ' ' + PS.plural(failed, 'Foto hat', 'Fotos haben') + ' nicht geklappt.'
+        text: ' ' + PS.plural(failed, 'Eins hat', 'Davon haben') + ' nicht geklappt.'
       }));
     }
     nodes.summary.appendChild(el('a', {

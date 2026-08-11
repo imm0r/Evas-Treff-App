@@ -475,6 +475,41 @@ img { display: block; max-width: 100%; }
 .date__fields { display: flex; gap: 8px; }
 .date__fields .field { flex: 1; min-width: 0; }
 
+/* --- Videos --------------------------------------------------------------- */
+
+/* Eine Videokachel IST ein Standbild — ohne Abzeichen tippt man sie an und
+   ist überrascht.
+
+   Oben LINKS, als einzige freie Ecke: unten links sitzt das Gesicht des
+   Hochladers, oben rechts der Kommentarzähler, und über die ganze untere
+   Kante läuft beim Überfahren sein Name. */
+.tile__play {
+  position: absolute; top: 4px; left: 4px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 11px; font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.lightbox__video {
+  max-width: 100%; max-height: 100%;
+  width: auto; height: auto;
+  background: #000;
+  border-radius: 4px;
+}
+
+/* Kein schwarzes Feld, sondern ein Satz und ein Ausweg. */
+.lightbox__unplayable {
+  display: flex; flex-direction: column; align-items: center; gap: 14px;
+  max-width: 30rem; margin: auto; padding: 22px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface);
+  text-align: center;
+}
+.lightbox__unplayable p { margin: 0; color: var(--ink-dim); }
+
 /* --- Rezepte -------------------------------------------------------------- */
 
 .rezepte { max-width: 620px; margin: 0 auto; padding: 0 var(--pad); }

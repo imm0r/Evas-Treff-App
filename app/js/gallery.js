@@ -373,6 +373,15 @@
       tile.classList.add('tile--face');
       tile.appendChild(tileFace);
     }
+    // Ein Video sieht als Kachel aus wie ein Foto — es IST ja ein Standbild
+    // daraus. Ohne Abzeichen würde man es antippen und wäre überrascht.
+    if (item.isVideo) {
+      tile.classList.add('tile--video');
+      tile.appendChild(el('span', {
+        class: 'tile__play',
+        text: item.duration ? '▶ ' + PS.video.formatDuration(item.duration) : '▶'
+      }));
+    }
     if (commentCount(item)) {
       tile.appendChild(el('span', {
         class: 'tile__talk' + (item.unread ? ' is-new' : ''),
@@ -406,6 +415,15 @@
 
   function buildLightbox(app) {
     nodes.lbImage = el('img', { class: 'lightbox__image', alt: '' });
+    // Ein eigenes Element statt eines umgebauten <img>: ein <video>, dem man
+    // die Quelle wegnimmt, hört sonst nicht zuverlässig auf zu laden, und ein
+    // weiterlaufender Ton hinter einem geschlossenen Fenster ist das
+    // Ärgerlichste, was so ein Betrachter tun kann.
+    nodes.lbVideo = el('video', {
+      class: 'lightbox__video is-hidden', controls: 'controls', playsinline: 'playsinline',
+      preload: 'metadata'
+    });
+    nodes.lbUnplayable = el('div', { class: 'lightbox__unplayable is-hidden' });
     nodes.lbFace = el('span', { class: 'lightbox__face is-hidden' });
     nodes.lbCaptionText = el('span');
     nodes.lbCaption = el('div', { class: 'lightbox__caption' }, [nodes.lbFace, nodes.lbCaptionText]);
@@ -449,6 +467,8 @@
       el('div', { class: 'lightbox__stage' }, [
         nodes.lbSpinner,
         nodes.lbImage,
+        nodes.lbVideo,
+        nodes.lbUnplayable,
         el('button', { class: 'lightbox__nav lightbox__nav--prev', onclick: function () { step(-1); } }, ['‹']),
         el('button', { class: 'lightbox__nav lightbox__nav--next', onclick: function () { step(1); } }, ['›'])
       ]),
@@ -494,6 +514,23 @@
     nodes.comments.classList.add('is-hidden');
     document.body.classList.remove('is-locked');
     nodes.lbImage.removeAttribute('src');
+    stopVideo();
+  }
+
+  /*
+   * Anhalten UND die Quelle wegnehmen.
+   *
+   * Nur `pause()` reicht nicht: der Browser lädt im Hintergrund weiter, und
+   * bei einem Video ist das echtes Datenvolumen für etwas, das niemand mehr
+   * ansieht. `load()` nach dem Entfernen bricht den laufenden Abruf ab.
+   */
+  function stopVideo() {
+    if (!nodes.lbVideo) return;
+    nodes.lbVideo.pause();
+    nodes.lbVideo.removeAttribute('src');
+    nodes.lbVideo.load();
+    nodes.lbVideo.classList.add('is-hidden');
+    nodes.lbUnplayable.classList.add('is-hidden');
   }
 
   function step(delta) {
@@ -506,12 +543,17 @@
   async function showCurrent() {
     var item = state.visible[state.lightbox];
     var token = item.id;
+    stopVideo();
     nodes.lbImage.classList.add('is-loading');
     nodes.lbSpinner.classList.remove('is-hidden');
     nodes.lbCaptionText.textContent = PS.people.display(item.uploader) + ' · ' + PS.formatDayShort(item.day) +
       ', ' + PS.formatTime(item.time);
     refreshLightboxFace();
-    nodes.lbDownload.setAttribute('download', item.day + '_' + item.time + '_' + item.uploader + '.jpg');
+    // Die Endung muss zum Inhalt passen, sonst öffnet das Heruntergeladene
+    // nirgends.
+    var endung = item.isVideo ? extensionOf(item.storagePath) : '.jpg';
+    nodes.lbDownload.setAttribute('download',
+      item.day + '_' + item.time + '_' + item.uploader + endung);
 
     // Only offer deletion on photos this browser uploaded. Everyone shares one
     // token, so this is a courtesy, not a permission: it stops someone tidying
@@ -528,8 +570,14 @@
     updateCommentButton(item);
     if (!nodes.comments.classList.contains('is-hidden')) renderComments();
 
+    if (item.isVideo) {
+      showVideo(item);
+      return;
+    }
+
     // Show the thumbnail immediately so there is never a blank stage, then
     // let the full size replace it once the browser has it.
+    nodes.lbImage.classList.remove('is-hidden');
     if (item.thumbUrl) nodes.lbImage.src = item.thumbUrl;
     if (!item.photoUrl) {
       nodes.lbImage.classList.remove('is-loading');
@@ -549,6 +597,54 @@
       nodes.lbSpinner.classList.add('is-hidden');
     };
     full.src = item.photoUrl;
+  }
+
+  function extensionOf(path) {
+    var hit = /(\.[a-z0-9]+)$/i.exec(path || '');
+    return hit ? hit[1].toLowerCase() : '.mp4';
+  }
+
+  /*
+   * Ein Video zeigen — und ehrlich sein, wenn es hier nicht geht.
+   *
+   * Videos gehen unverändert in den Speicher, also liegt dort auch das .mov
+   * vom iPhone. Das spielt auf Apple-Geräten, in Chrome oder Firefox auf
+   * anderen Systemen oft nicht. Der Betrachter bekommt dann KEIN schwarzes
+   * Feld, sondern das Standbild, einen Satz der das erklärt, und den Download
+   * — auf dem eigenen Gerät öffnet die Datei meistens sehr wohl.
+   */
+  function showVideo(item) {
+    nodes.lbSpinner.classList.add('is-hidden');
+    nodes.lbImage.classList.remove('is-loading');
+    /*
+     * Das Bild WEG, nicht nur ungenutzt.
+     *
+     * Beide stehen im selben Kasten nebeneinander, also stand das Standbild
+     * links neben dem Abspieler und zeigte dasselbe zweimal. Gegen das
+     * schwarze Aufblitzen vor dem ersten Videobild hilft das `poster` am
+     * Video, nicht ein zweites Element daneben.
+     */
+    nodes.lbImage.classList.add('is-hidden');
+    nodes.lbImage.removeAttribute('src');
+    if (!item.photoUrl) return;
+
+    nodes.lbDownload.href = item.photoUrl;
+    nodes.lbVideo.poster = item.thumbUrl || '';
+    nodes.lbVideo.onerror = function () {
+      nodes.lbVideo.classList.add('is-hidden');
+      nodes.lbUnplayable.innerHTML = '';
+      nodes.lbUnplayable.appendChild(el('p', {
+        text: 'Dieses Video kann dein Browser nicht abspielen — das liegt am ' +
+              'Format, in dem es aufgenommen wurde.'
+      }));
+      nodes.lbUnplayable.appendChild(el('a', {
+        class: 'btn btn--primary', href: item.photoUrl,
+        download: nodes.lbDownload.getAttribute('download')
+      }, ['Herunterladen und dort ansehen']));
+      nodes.lbUnplayable.classList.remove('is-hidden');
+    };
+    nodes.lbVideo.classList.remove('is-hidden');
+    nodes.lbVideo.src = item.photoUrl;
   }
 
   function buildComments() {

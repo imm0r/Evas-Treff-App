@@ -163,6 +163,7 @@
   data.photos = async function (albumId) {
     var rows = await PS.sb.select('photos',
       'select=id,storage_path,thumb_path,content_hash,taken_at,uploader_id,uploader_name,' +
+      'media_type,duration_seconds,' +
       'comments(id,body,author_id,author_name,created_at),comment_reads(seen_at)' +
       '&album_id=eq.' + albumId + '&order=taken_at.desc');
 
@@ -185,6 +186,9 @@
         id: row.id,
         unread: unread,
         hash: row.content_hash,
+        isVideo: row.media_type === 'video',
+        duration: row.duration_seconds === null || row.duration_seconds === undefined
+          ? null : Number(row.duration_seconds),
         day: when.day,
         time: when.time,
         at: when.at,
@@ -206,28 +210,51 @@
     });
   };
 
-  data.knownHashes = async function (albumId) {
-    var rows = await PS.sb.select('photos', 'select=content_hash&album_id=eq.' + albumId);
-    var seen = new Set();
-    rows.forEach(function (row) { seen.add(row.content_hash); });
-    return seen;
+  /*
+   * Was im Album schon liegt: die Hashes gegen Doppelte, und wie viel wovon.
+   *
+   * Die Zählung kommt aus derselben Abfrage, statt aus einer zweiten. Sie wird
+   * gebraucht, seit ein Album auch Videos enthalten kann — "Im Album sind
+   * 3 Fotos" wäre schlicht falsch, wenn zwei davon Filme sind.
+   */
+  data.albumIndex = async function (albumId) {
+    var rows = await PS.sb.select('photos',
+      'select=content_hash,media_type&album_id=eq.' + albumId);
+    var index = { hashes: new Set(), photos: 0, videos: 0 };
+    rows.forEach(function (row) {
+      index.hashes.add(row.content_hash);
+      if (row.media_type === 'video') index.videos++; else index.photos++;
+    });
+    return index;
   };
 
   data.addPhoto = async function (album, photo) {
     var base = album.slug + '/' + photo.hash;
+    /*
+     * Ein Video geht mit SEINER Endung und SEINEM Typ hinauf, ein Foto wie
+     * bisher als JPEG. Der Speicher liefert eine Datei später mit dem Typ aus,
+     * den er beim Hochladen bekommen hat — ein `.jpg`, in dem ein Film steckt,
+     * öffnet auf keinem Gerät.
+     */
+    var endung = photo.extension || '.jpg';
+
     // Picture before row, mirroring the old upload order for the same reason:
     // a row pointing at a file that is not there shows a broken tile, while a
     // file with no row is merely invisible.
-    await PS.sb.upload('photos', base + '.jpg', photo.full);
+    await PS.sb.upload('photos', base + endung, photo.full, photo.contentType || 'image/jpeg');
     await PS.sb.upload('photos', base + '_thumb.jpg', photo.thumb);
     var rows = await PS.sb.insert('photos', {
       album_id: album.id,
-      storage_path: base + '.jpg',
+      storage_path: base + endung,
       thumb_path: base + '_thumb.jpg',
       content_hash: photo.hash,
       taken_at: photo.takenAt.toISOString(),
       uploader_id: PS.sb.user() && PS.sb.user().id,
       uploader_name: photo.uploader,
+      media_type: photo.isVideo ? 'video' : 'image',
+      // Die Tabelle verbietet eine Dauer an einem Foto, und ein Video, dessen
+      // Länge das Gerät nicht hergab, darf trotzdem hoch.
+      duration_seconds: photo.isVideo && photo.duration ? photo.duration : null,
       width: photo.width, height: photo.height, bytes: photo.full.size
     });
     return rows[0];
