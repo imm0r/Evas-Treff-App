@@ -1927,12 +1927,23 @@ const SESSION = '#access_token=tok-abc&refresh_token=ref-abc&expires_in=3600&tok
     await stub(page, back);
     await page.addInitScript(fall.skript);
     await page.goto(origin + '/neues.html' + SESSION);
-    await page.waitForSelector('.neues .glocke, .neues .status');
+    /*
+     * Auf den Archiv-Bereich warten — der steht IMMER am Ende von `render()`.
+     *
+     * Zwei Anläufe waren falsch. Erst auf die Glocke: die ist bei einem
+     * Browser ohne Push ein leeres <div>, und leere Glocken blendet das CSS
+     * aus — der Testlauf wartete auf etwas, das nie sichtbar wird. Dann auf
+     * „kein Ladekreisel mehr": das trifft auch VOR seinem Erscheinen zu, also
+     * las der Test die noch leere Seite.
+     *
+     * Was gebraucht wird, ist ein Zeichen dafür, dass gezeichnet WURDE.
+     */
+    await page.waitForSelector('.neues .archiv');
     const text = await page.textContent('.neues');
     check('push: ' + fall.was + ' → ' + (fall.erwartet || 'gar kein Schalter'),
       fall.erwartet ? text.includes(fall.erwartet)
         : (!text.includes('Benachrichtigungen einschalten') && !text.includes('Startbildschirm')),
-      text.slice(0, 120));
+      'gezeigt wurde: ' + JSON.stringify(text.slice(0, 200)));
     await context.close();
   }
 
