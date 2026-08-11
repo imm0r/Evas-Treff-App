@@ -23,8 +23,9 @@ auch die Geburtstage).
 
 ---
 
-A family hub for a couple of dozen relatives: photo albums, dates and birthdays,
-a pinboard, recipes, and the guest list that decides who may see any of it. A static page on GitHub Pages in
+A family hub for a couple of dozen relatives: photo albums (videos too), dates
+and birthdays, a pinboard, recipes, and the guest list that decides who may see
+any of it. A static page on GitHub Pages in
 front of a Supabase project.
 
 ```
@@ -124,6 +125,31 @@ family cooks Kartoffelsalat twice, but the slug is unique because it is in the
 URL. The second one used to get *„Das gibt es schon."* and a dead end; now it
 becomes `-2`. On the server's refusal rather than a lookup first: two people
 creating at the same moment would both pass a lookup and one would still fail.
+
+**Videos go up untouched, and the still frame is what makes that safe.**
+Photos are shrunk on the device; a video cannot be, so what was filmed is what
+gets stored. That leaves one unpleasant truth: iPhones film in HEVC/`.mov`,
+which plays on Apple devices and often not at all in Chrome or Firefox
+elsewhere. Rejecting the format would lock half the family out of uploading, so
+instead the uploader's browser pulls a **still frame** out of the video before
+it goes anywhere. That frame is an ordinary JPEG thumbnail, so the gallery looks
+right even for a viewer who cannot play the file — and that viewer gets a
+sentence saying why, plus the download, instead of a black rectangle.
+
+The still is taken half a second in, not at zero: cameras start dark and settle
+their exposure afterwards, so frame zero is usually black. If the uploader's own
+browser cannot decode the file, that is discovered *here* — before a single byte
+crosses the network.
+
+Freshly recorded video reports its length as `Infinity` until something seeks to
+the end, because a recorder only writes the duration once it finishes. Without
+that detour every video filmed on a phone would show no running time at all.
+
+Two limits are deliberate. **200 MB per video**, checked before the upload
+starts rather than after: the upload runs in one shot with no resume, so the cap
+is about what survives a shaky mobile connection, not about the plan's 100 GB.
+And duplicate detection hashes only the **first megabyte plus the file size** —
+reading 200 MB into memory to hash it is how you crash an older phone.
 
 **One album is not a dead end.** With exactly one album the app opens it
 straight away — that is what the links already in the family's group chat do,
@@ -300,7 +326,8 @@ Three checks, all of which measure the code against something other than itself:
   2560px JPEG, a HEIC arriving as one at all, uploading the same file twice
   being a no-op, the delete button appearing only on your own things, the guest
   list refusing a non-admin, the calendar asking only for dates from today
-  onwards and sorting birthdays in among the events, a recipe's ingredients
+  onwards and sorting birthdays in among the events, a still frame that really
+  came out of a video rather than a black square, a recipe's ingredients
   surviving as the lines somebody typed, an empty time arriving as
   `null` rather than `00:00`, a date that has started still being listed while
   one that has ended is not, a single album still reaching the shelf so a
